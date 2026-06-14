@@ -34,12 +34,15 @@ _DEV_MODELS = ModelConfig(
     conversation_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
 )
 
-# 本番: 分析=Opus 4.8 / 生成=Sonnet 4.6 / 検証=Haiku / 対話=Haiku(即時性重視)
+# 本番: バッチ系は Opus 4.6（品質最優先）、LINE会話は Sonnet 4.6（速度と共感の最良バランス）。
+# ※ Opus 4.8 はアカウントで未有効化のため 4.6 を使用。有効化後は _OPUS を
+#    "us.anthropic.claude-opus-4-8" に置換して再デプロイすれば 4.8 へ移行できる。
+_OPUS = "us.anthropic.claude-opus-4-6-v1"
 _PROD_MODELS = ModelConfig(
-    analyzer_model="us.anthropic.claude-opus-4-8",
-    persuader_model="us.anthropic.claude-sonnet-4-6",
-    guardrail_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    conversation_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    analyzer_model=_OPUS,
+    persuader_model=_OPUS,
+    guardrail_model=_OPUS,
+    conversation_model="us.anthropic.claude-sonnet-4-6",  # 会話のみ Sonnet 4.6（同期応答の即時性）
 )
 
 

@@ -28,7 +28,7 @@ from constructs import Construct
 
 # 既定モデル（dev=Haiku）。本番は環境変数 NRB_ENV=prod で切替。
 _DEFAULT_ENV = {
-    "NRB_ENV": "dev",
+    "NRB_ENV": "prod",  # 全モデル Opus 4.6（ユーザー指定）。dev は Haiku 統一
     "NRB_DDB_TABLE": "NightRamenTable",
     "NRB_SECRET_GOOGLE": "night-ramen/google-oauth",
     "NRB_SECRET_LINE": "night-ramen/line",
