@@ -1,0 +1,18 @@
+[project]
+name = "night-ramen-breakdown"
+version = "0.1.0"
+description = "深夜のラーメン断ち自律改善ループシステム"
+requires-python = ">=3.13"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.black]
+line-length = 100
+target-version = ["py313"]
