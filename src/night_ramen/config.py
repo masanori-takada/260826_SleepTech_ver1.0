@@ -22,16 +22,19 @@ class ModelConfig:
     persuader_model: str
     guardrail_model: str
     conversation_model: str  # LINE対話（002）。速度・コスト重視で既定Haiku
+    classifier_model: str    # 自己申告のyes/no/unknown分類。軽量タスクなので常にHaiku
 
 
 # Bedrock は新しいモデルを「推論プロファイル(inference profile)」経由で呼ぶ必要がある
 # （直接のモデルIDだと on-demand 非対応で ValidationException）。us. プレフィックスを使用。
 # 開発既定: 全用途を最安 Haiku に統一（原則V コスト規律）
+_HAIKU = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 _DEV_MODELS = ModelConfig(
-    analyzer_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    persuader_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    guardrail_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    conversation_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    analyzer_model=_HAIKU,
+    persuader_model=_HAIKU,
+    guardrail_model=_HAIKU,
+    conversation_model=_HAIKU,
+    classifier_model=_HAIKU,
 )
 
 # 本番: バッチ系は Opus 4.6（品質最優先）、LINE会話は Sonnet 4.6（速度と共感の最良バランス）。
@@ -43,6 +46,7 @@ _PROD_MODELS = ModelConfig(
     persuader_model=_OPUS,
     guardrail_model=_OPUS,
     conversation_model="us.anthropic.claude-sonnet-4-6",  # 会話のみ Sonnet 4.6（同期応答の即時性）
+    classifier_model=_HAIKU,  # 自己申告分類は高速・低コストの Haiku 固定
 )
 
 

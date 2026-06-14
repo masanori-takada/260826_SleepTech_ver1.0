@@ -139,8 +139,8 @@ def _handle_message(ev, deps, token, settings, log) -> None:
     invoker = deps["invoker"]
     model = settings.models.conversation_model
 
-    # 2. 自己申告抽出（併用）→ REPORT 保存（FR-105）
-    ramen = extract_ramen_report(text, invoker, model)
+    # 2. 自己申告抽出（併用）→ REPORT 保存（FR-105）。分類は高速な Haiku を使用
+    ramen = extract_ramen_report(text, invoker, settings.models.classifier_model)
     if ramen is not None:
         try:
             deps["report"].put(date, ramen)
