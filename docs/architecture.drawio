@@ -6,7 +6,7 @@
         <mxCell id="1" parent="0" />
 
         <!-- タイトル -->
-        <mxCell id="title" value="Night Ramen Breakdown — 全体構成フロー&#10;(Feature 001 夜間ループ ＋ Feature 002 LINE対話)" style="text;html=1;fontSize=18;fontStyle=1;align=left;verticalAlign=middle;" vertex="1" parent="1">
+        <mxCell id="title" value="Night Ramen Breakdown — 全体構成フロー&#10;(001 夜間ループ ＋ 002 LINE対話 ＋ 003 起床トリガー収集)" style="text;html=1;fontSize=18;fontStyle=1;align=left;verticalAlign=middle;" vertex="1" parent="1">
           <mxGeometry x="40" y="15" width="620" height="50" as="geometry" />
         </mxCell>
 
@@ -51,8 +51,8 @@
         </mxCell>
 
         <!-- Webhook Lambda -->
-        <mxCell id="lambda_webhook" value="λ Webhook Lambda&#10;署名検証→会話応答&#10;→ガードレール→返信&#10;＋申告保存→Memory書込" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF4E5;strokeColor=#FF9900;fontSize=10;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="560" y="530" width="170" height="80" as="geometry" />
+        <mxCell id="lambda_webhook" value="λ Webhook Lambda&#10;署名検証→[起床語なら当日収集]&#10;→会話応答→ガードレール→返信&#10;＋申告保存→Memory書込" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF4E5;strokeColor=#FF9900;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="560" y="525" width="170" height="90" as="geometry" />
         </mxCell>
 
         <!-- Function URL -->
@@ -144,11 +144,22 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="e19" value="バイタル/目標参照" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#3F51B5;strokeWidth=1;endArrow=block;fontSize=9;dashed=1;" edge="1" parent="1" source="lambda_webhook" target="ddb">
+        <mxCell id="e19" value="バイタル/目標参照&#10;(起床時は当日収集を書込)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#3F51B5;strokeWidth=1;endArrow=block;fontSize=9;dashed=1;" edge="1" parent="1" source="lambda_webhook" target="ddb">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="850" y="560" />
               <mxPoint x="850" y="325" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ===== 起床トリガー収集 (Feature 003) ===== -->
+        <mxCell id="e20" value="⑦' 起床語(おはよう等)→8時を待たず当日収集&#10;run_morning再利用→最新バイタルを会話へ反映" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#4285F4;strokeWidth=2;endArrow=block;fontSize=10;" edge="1" parent="1" source="lambda_webhook" target="ghealth">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="540" y="660" />
+              <mxPoint x="295" y="660" />
+              <mxPoint x="295" y="200" />
             </Array>
           </mxGeometry>
         </mxCell>
@@ -165,12 +176,12 @@
         </mxCell>
 
         <!-- 凡例 -->
-        <mxCell id="legend" value="フロー: 朝(①②) 収集 / 夜(③〜⑥) push説得 / 会話(⑦〜⑫) reply対話。&#10;破線=シークレット参照。応答: ウォーム約6秒 / コールド約13秒。&#10;LINE OA: 応答モード=Bot, 応答メッセージ=オフ, Webhook=オン。" style="text;html=1;align=left;verticalAlign=top;fontSize=10;fontColor=#555555;whiteSpace=wrap;" vertex="1" parent="1">
-          <mxGeometry x="40" y="520" width="270" height="90" as="geometry" />
+        <mxCell id="legend" value="フロー: 朝(①②) 収集 / 夜(③〜⑥) push説得 / 会話(⑦〜⑫) reply対話。&#10;⑦' 起床語(おはよう等)で8時を待たず当日収集→会話へ反映 (Feature 003)。&#10;破線=シークレット参照。応答: ウォーム約6秒 / コールド約13秒。&#10;LINE OA: 応答モード=Bot, 応答メッセージ=オフ, Webhook=オン。" style="text;html=1;align=left;verticalAlign=top;fontSize=10;fontColor=#555555;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="885" y="585" width="220" height="135" as="geometry" />
         </mxCell>
 
         <!-- 更新日 -->
-        <mxCell id="updated" value="最終更新: 2026-06-15 (Feature 002)" style="text;html=1;align=right;fontSize=10;fontColor=#888888;" vertex="1" parent="1">
+        <mxCell id="updated" value="最終更新: 2026-06-15 (Feature 002 + 003)" style="text;html=1;align=right;fontSize=10;fontColor=#888888;" vertex="1" parent="1">
           <mxGeometry x="900" y="20" width="220" height="20" as="geometry" />
         </mxCell>
 
