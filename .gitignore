@@ -9,7 +9,8 @@ venv/
 # CDK
 infra/cdk.out*/
 cdk.out*/
-infra/layers/*/python/   # Lambda Layer 素材(pip展開, 再生成可)
+# Lambda Layer 素材(pip展開, 再生成可)
+infra/layers/*/python/
 
 # OS
 .DS_Store
