@@ -32,32 +32,50 @@ class ConversationContext:
     ltm_snippets: list[str] = field(default_factory=list)    # LTM
     vitals_summary: str = ""
     goal_summary: str = ""
+    today: str = ""   # 今日の日付(JST)。「昨日」等の相対表現の解決に用いる
 
 
-def summarize_vitals(vitals: list[DailyVitalRecord]) -> str:
-    """直近バイタルを短い文脈文字列へ要約（FR-104）。"""
+def _fmt_minutes(m: int | None) -> str:
+    """分 → 「7時間12分」表記。None は「記録なし」。"""
+    if m is None:
+        return "記録なし"
+    return f"{m // 60}時間{m % 60}分"
+
+
+def _day_line(v: DailyVitalRecord) -> str:
+    """1日分を日別の読みやすい1行に整形（特定日の質問に答えられるよう日付付き）。"""
+    ramen = {True: "ラーメン有", False: "我慢", None: "申告なし"}[v.ramen_last_night]
+    sleep = _fmt_minutes(v.total_sleep_min)
+    deep = f"{v.deep_sleep_min}分" if v.deep_sleep_min is not None else "—"
+    hrv = f"{v.hrv}ms" if v.hrv is not None else "—"
+    awak = f"{v.awakenings}回" if v.awakenings is not None else "—"
+    steps = v.next_day_steps if v.next_day_steps is not None else "—"
+    return (f"{v.date}: 睡眠{sleep}(深い{deep}/中途覚醒{awak}) "
+            f"HRV{hrv} 翌日歩数{steps} {ramen}")
+
+
+def summarize_vitals(vitals: list[DailyVitalRecord], recent_days: int = 7) -> str:
+    """直近バイタルを日別の文脈文字列へ整形（FR-104）。
+
+    「昨日の睡眠時間は？」のような特定日の質問に答えられるよう、
+    直近数日を日付付きで列挙する。
+    """
     usable = [v for v in vitals if v.has_any_vitals]
     if not usable:
         return "（バイタルデータはまだ十分にありません）"
-    latest = usable[-1]
-    ramen_days = sum(1 for v in usable if v.ramen_last_night is True)
-    parts = []
-    if latest.hrv is not None:
-        parts.append(f"直近HRV {latest.hrv}ms")
-    if latest.deep_sleep_min is not None:
-        parts.append(f"深い睡眠 {latest.deep_sleep_min}分")
-    if latest.next_day_steps is not None:
-        parts.append(f"翌日歩数 {latest.next_day_steps}")
-    parts.append(f"直近{len(usable)}日でラーメン{ramen_days}回")
-    return " / ".join(parts)
+    recent = usable[-recent_days:]
+    lines = "\n".join(_day_line(v) for v in recent)
+    ramen_days = sum(1 for v in recent if v.ramen_last_night is True)
+    return f"直近{len(recent)}日のバイタル（新しい行ほど最近）:\n{lines}\n（この期間でラーメン{ramen_days}回）"
 
 
-def build_context(recent_turns, ltm_snippets, vitals, goal: Goal) -> ConversationContext:
+def build_context(recent_turns, ltm_snippets, vitals, goal: Goal, today: str = "") -> ConversationContext:
     return ConversationContext(
         recent_turns=recent_turns,
         ltm_snippets=ltm_snippets,
         vitals_summary=summarize_vitals(vitals),
         goal_summary=f"成功率目標 {goal.success_rate_target:.0%} / 減量 {goal.weight_loss_target_kg}kg",
+        today=today,
     )
 
 
@@ -67,12 +85,16 @@ def generate_reply(
     """健康コーチ応答を生成（FR-101,112）。未検証。送信前に guardrail 必須。"""
     history = "\n".join(f"{t['role']}: {t['text']}" for t in ctx.recent_turns)
     ltm = "\n".join(f"- {s}" for s in ctx.ltm_snippets) or "（特になし）"
+    today_line = f"【今日の日付】{ctx.today}（「昨日」はこの前日を指す）\n" if ctx.today else ""
     prompt = (
+        f"{today_line}"
         f"【ユーザーについて記憶していること】\n{ltm}\n\n"
         f"【最近の会話】\n{history or '（なし）'}\n\n"
-        f"【バイタル傾向】{ctx.vitals_summary}\n"
+        f"【バイタルデータ（日付別。睡眠時間や歩数などの質問にはこの数値で答える）】\n{ctx.vitals_summary}\n\n"
         f"【目標】{ctx.goal_summary}\n\n"
         f"【ユーザーの今のメッセージ】{user_text}\n\n"
         "健康コーチとして、上記を踏まえた返答をしてください。"
+        "睡眠時間・歩数など具体的な数値を聞かれたら、上のバイタルデータから該当日の値を答えてください。"
+        "データに無い項目は正直に『まだ取れていない』と伝えてください。"
     )
     return invoker(model_id, prompt, HEALTH_COACH_PROMPT).strip()

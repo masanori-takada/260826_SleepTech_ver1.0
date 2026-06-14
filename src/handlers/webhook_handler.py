@@ -154,7 +154,7 @@ def _handle_message(ev, deps, token, settings, log) -> None:
     ltm = memory.retrieve_ltm(actor_id, session_id, query=text, top_k=3) if memory else []
     since = (date_cls.fromisoformat(date) - td(days=30)).isoformat()
     vitals = deps["vitals_client"].get_vitals(since, date)
-    ctx = build_context(recent_turns, ltm, vitals, deps["goal"])
+    ctx = build_context(recent_turns, ltm, vitals, deps["goal"], today=date)
 
     # 4. 応答生成 → ガードレール（送信前必須, FR-106）
     g_ctx = GuardrailContext(goal_summary=ctx.goal_summary)
