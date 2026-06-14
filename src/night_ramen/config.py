@@ -23,18 +23,20 @@ class ModelConfig:
     guardrail_model: str
 
 
+# Bedrock は新しいモデルを「推論プロファイル(inference profile)」経由で呼ぶ必要がある
+# （直接のモデルIDだと on-demand 非対応で ValidationException）。us. プレフィックスを使用。
 # 開発既定: 全用途を最安 Haiku に統一（原則V コスト規律）
 _DEV_MODELS = ModelConfig(
-    analyzer_model="anthropic.claude-haiku-4-5-20251001-v1:0",
-    persuader_model="anthropic.claude-haiku-4-5-20251001-v1:0",
-    guardrail_model="anthropic.claude-haiku-4-5-20251001-v1:0",
+    analyzer_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    persuader_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    guardrail_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
 )
 
 # 本番: 分析=Opus 4.8 / 生成=Sonnet 4.6 / 検証=Haiku
 _PROD_MODELS = ModelConfig(
-    analyzer_model="anthropic.claude-opus-4-8",
-    persuader_model="anthropic.claude-sonnet-4-6",
-    guardrail_model="anthropic.claude-haiku-4-5-20251001-v1:0",
+    analyzer_model="us.anthropic.claude-opus-4-8",
+    persuader_model="us.anthropic.claude-sonnet-4-6",
+    guardrail_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
 )
 
 
