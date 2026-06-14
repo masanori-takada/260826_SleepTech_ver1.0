@@ -14,9 +14,11 @@ from typing import Callable
 TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 
 # Google Health API のスコープ（読み取り専用、最小権限 / 原則III）
+# sleep 取得には health.sleep.readonly が必須（再同意で refresh_token 再発行）
 HEALTH_SCOPES = (
     "https://www.googleapis.com/auth/health.activity_and_fitness.readonly",
     "https://www.googleapis.com/auth/health.health_metrics_and_measurements.readonly",
+    "https://www.googleapis.com/auth/health.sleep.readonly",
 )
 
 
