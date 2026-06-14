@@ -35,33 +35,37 @@ class PushClient(Protocol):
 
 
 class LinePushClient:
-    """本番用: LINE Messaging API（push message）。"""
+    """本番用: LINE Messaging API（push message）。
+
+    標準ライブラリ(urllib)のみで実装し、Lambda へ外部依存を持ち込まない
+    （boto3 + stdlib だけでデプロイ可能にする / 原則IV のシンプルさ）。
+    エンドポイント: POST https://api.line.me/v2/bot/message/push
+    """
+
+    PUSH_URL = "https://api.line.me/v2/bot/message/push"
 
     def __init__(self, channel_access_token: str, user_id: str) -> None:
-        from linebot.v3.messaging import (  # 遅延 import
-            ApiClient,
-            Configuration,
-            MessagingApi,
-            PushMessageRequest,
-            TextMessage,
-        )
-
+        self._token = channel_access_token
         self._user_id = user_id
-        self._cfg = Configuration(access_token=channel_access_token)
-        self._ApiClient = ApiClient
-        self._MessagingApi = MessagingApi
-        self._PushMessageRequest = PushMessageRequest
-        self._TextMessage = TextMessage
 
     def push(self, text: str) -> None:
-        with self._ApiClient(self._cfg) as api_client:
-            api = self._MessagingApi(api_client)
-            api.push_message(
-                self._PushMessageRequest(
-                    to=self._user_id,
-                    messages=[self._TextMessage(text=text)],
-                )
-            )
+        import json
+        import urllib.request
+
+        body = json.dumps(
+            {"to": self._user_id, "messages": [{"type": "text", "text": text}]}
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            self.PUSH_URL,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as r:  # noqa: S310 — 固定の LINE 端点
+            r.read()
 
 
 class DryRunPushClient:

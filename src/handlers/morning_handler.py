@@ -20,6 +20,7 @@ def build_morning_dependencies(settings):
     from night_ramen.collectors.google_health_api import GoogleHealthApiSource
     from night_ramen.collectors.self_report import StaticSelfReportSource
     from night_ramen.memory.client import MemoryClient
+    from night_ramen.memory.dynamo_backend import DynamoMemoryBackend
 
     # Secrets Manager のリフレッシュトークンからアクセストークンを供給する
     def access_token_provider() -> str:
@@ -29,7 +30,10 @@ def build_morning_dependencies(settings):
         return get_access_token(secret)
 
     health_source = GoogleHealthApiSource(access_token_provider)
-    return MemoryClient(), health_source, StaticSelfReportSource()
+    backend = DynamoMemoryBackend(
+        settings.dynamodb_table, settings.region, settings.vital_retention_days
+    )
+    return MemoryClient(backend), health_source, StaticSelfReportSource()
 
 
 def _google_secret(settings) -> dict:

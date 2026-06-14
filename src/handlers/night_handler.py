@@ -22,6 +22,7 @@ def build_night_dependencies(settings, dry_run: bool):
 
     from night_ramen.agents.prompts import boto3_invoker
     from night_ramen.memory.client import MemoryClient
+    from night_ramen.memory.dynamo_backend import DynamoMemoryBackend
     from night_ramen.memory.schemas import Goal
     from night_ramen.notifier.line import (
         DryRunPushClient,
@@ -45,9 +46,12 @@ def build_night_dependencies(settings, dry_run: bool):
         creds = _line_credentials(settings)
         push = LinePushClient(creds["channel_access_token"], creds["user_id"])
 
+    backend = DynamoMemoryBackend(
+        settings.dynamodb_table, settings.region, settings.vital_retention_days
+    )
     return NightDependencies(
         settings=settings,
-        memory=MemoryClient(),  # 既定 InMemory。agentcore 接続時は backend を注入
+        memory=MemoryClient(backend),  # DynamoDB 永続層で朝Lambdaと状態共有
         invoker=boto3_invoker(settings.region),
         goal=goal,
         idempotency=store,
