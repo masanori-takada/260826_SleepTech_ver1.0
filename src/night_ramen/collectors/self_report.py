@@ -62,3 +62,23 @@ def parse_ramen_reply(text: str) -> bool | None:
     if any(w in t for w in _YES_WORDS):
         return True
     return None
+
+
+# 起床トリガー語（Feature 003）。朝8時の定時収集を待たず当日収集を起こす。
+# 自己申告語（_YES_WORDS/_NO_WORDS）とは重複させない。
+_WAKEUP_WORDS = (
+    "おはよう",
+    "おは",
+    "起きた",
+    "おきた",
+    "データ更新",
+    "更新",
+    "同期",
+    "計測",
+)
+
+
+def is_wakeup_trigger(text: str) -> bool:
+    """起床トリガー語かどうか。当日の Google Health 収集を起こすために使う（FR-003）。"""
+    t = text.strip().lower()
+    return any(w in t for w in _WAKEUP_WORDS)

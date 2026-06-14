@@ -104,7 +104,7 @@ class NightRamenStack(Stack):
             )
         )
 
-        # --- Webhook Lambda（LINE 自己申告受信 / US2）---
+        # --- Webhook Lambda（LINE 自己申告受信 / US2＋起床トリガー収集 / Feature 003）---
         webhook_fn = lambda_.Function(
             self,
             "WebhookFn",
@@ -112,12 +112,13 @@ class NightRamenStack(Stack):
             runtime=runtime,
             handler="handlers.webhook_handler.handler",
             code=code,
-            timeout=Duration.seconds(30),
-            memory_size=256,
+            timeout=Duration.seconds(60),  # 起床トリガー時に当日収集を同期実行する余裕
+            memory_size=512,
             environment=dict(_DEFAULT_ENV),
         )
-        table.grant_read_write_data(webhook_fn)  # REPORT の読み書き
+        table.grant_read_write_data(webhook_fn)  # REPORT・バイタルの読み書き
         line_secret.grant_read(webhook_fn)        # 署名検証・返信トークン
+        google_secret.grant_read(webhook_fn)      # 起床トリガー収集（Feature 003）
         # 公開 HTTPS エンドポイント（LINE Webhook URL に登録する）
         webhook_url = webhook_fn.add_function_url(
             auth_type=lambda_.FunctionUrlAuthType.NONE

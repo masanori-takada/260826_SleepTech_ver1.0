@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from night_ramen.collectors.self_report import parse_ramen_reply
+from night_ramen.collectors.self_report import is_wakeup_trigger, parse_ramen_reply
 from night_ramen.notifier.line import verify_line_signature
 
 
@@ -26,6 +26,23 @@ def test_negative_precedence_over_substring():
 def test_parse_unknown():
     assert parse_ramen_reply("こんにちは") is None
     assert parse_ramen_reply("") is None
+
+
+def test_wakeup_trigger_detected():
+    # 起床トリガー語（Feature 003）
+    assert is_wakeup_trigger("おはよう") is True
+    assert is_wakeup_trigger("おはよう☀️") is True
+    assert is_wakeup_trigger("データ更新して") is True
+    assert is_wakeup_trigger("同期") is True
+    assert is_wakeup_trigger("起きたよ") is True
+
+
+def test_wakeup_trigger_not_for_self_report_or_chitchat():
+    # 自己申告語・雑談はトリガーにしない（誤爆防止）
+    assert is_wakeup_trigger("食べた") is False
+    assert is_wakeup_trigger("我慢した") is False
+    assert is_wakeup_trigger("こんばんは") is False
+    assert is_wakeup_trigger("") is False
 
 
 def test_signature_verification():
