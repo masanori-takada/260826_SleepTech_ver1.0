@@ -21,6 +21,7 @@ class ModelConfig:
     analyzer_model: str
     persuader_model: str
     guardrail_model: str
+    conversation_model: str  # LINE対話（002）。速度・コスト重視で既定Haiku
 
 
 # Bedrock は新しいモデルを「推論プロファイル(inference profile)」経由で呼ぶ必要がある
@@ -30,13 +31,15 @@ _DEV_MODELS = ModelConfig(
     analyzer_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
     persuader_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
     guardrail_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    conversation_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
 )
 
-# 本番: 分析=Opus 4.8 / 生成=Sonnet 4.6 / 検証=Haiku
+# 本番: 分析=Opus 4.8 / 生成=Sonnet 4.6 / 検証=Haiku / 対話=Haiku(即時性重視)
 _PROD_MODELS = ModelConfig(
     analyzer_model="us.anthropic.claude-opus-4-8",
     persuader_model="us.anthropic.claude-sonnet-4-6",
     guardrail_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    conversation_model="us.anthropic.claude-haiku-4-5-20251001-v1:0",
 )
 
 
@@ -58,6 +61,7 @@ class Settings:
     dynamodb_table: str
     secret_google: str
     secret_line: str
+    memory_id: str  # agentcore Memory リソースID（002 / 空なら会話の記憶機能を無効化）
 
 
 def _env_int(name: str, default: int) -> int:
@@ -87,4 +91,5 @@ def load_settings() -> Settings:
         dynamodb_table=os.getenv("NRB_DDB_TABLE", "NightRamenTable"),
         secret_google=os.getenv("NRB_SECRET_GOOGLE", "night-ramen/google-oauth"),
         secret_line=os.getenv("NRB_SECRET_LINE", "night-ramen/line"),
+        memory_id=os.getenv("NRB_MEMORY_ID", ""),
     )
