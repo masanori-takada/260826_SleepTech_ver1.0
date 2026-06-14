@@ -106,6 +106,30 @@ def test_fetch_raw_maps_real_shapes():
     assert raw["sleep_score"] is None
 
 
+def test_sleep_stages_are_derived():
+    # STAGES 配列から深い睡眠時間と中途覚醒回数を派生（実機レスポンス形状）
+    sleep_resp = {"dataPoints": [{"sleep": {
+        "interval": {"endTime": "2026-06-14T23:36:00Z", "endUtcOffset": "0s"},
+        "type": "STAGES",
+        "stages": [
+            {"type": "AWAKE", "startTime": "2026-06-14T00:00:00Z", "endTime": "2026-06-14T00:05:00Z"},
+            {"type": "LIGHT", "startTime": "2026-06-14T00:05:00Z", "endTime": "2026-06-14T00:30:00Z"},
+            {"type": "DEEP",  "startTime": "2026-06-14T00:30:00Z", "endTime": "2026-06-14T01:30:00Z"},
+            {"type": "AWAKE", "startTime": "2026-06-14T01:30:00Z", "endTime": "2026-06-14T01:35:00Z"},
+            {"type": "REM",   "startTime": "2026-06-14T01:35:00Z", "endTime": "2026-06-14T02:00:00Z"},
+        ],
+    }}]}
+    source = GoogleHealthApiSource(
+        access_token_provider=lambda: "t",
+        http_post=_fake_post_factory({}),
+        http_get=_fake_get_factory({"sleep": sleep_resp}),
+    )
+    raw = source.fetch_raw("2026-06-14")
+    assert raw["deep_sleep_min"] == 60       # DEEP 1時間
+    assert raw["awakenings"] == 1            # 先頭以外の AWAKE 1回
+    assert raw["sleep_score"] is None        # STAGES には含まれない
+
+
 def test_fetch_raw_token_failure_is_consent_revoked():
     def bad_token():
         raise PermissionError("invalid_grant")

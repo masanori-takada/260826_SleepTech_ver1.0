@@ -111,9 +111,12 @@
   - **dailyRollUp 非対応の型**: `sleep`, `heart-rate-variability` → `list`(GET) を使う。
     list レスポンス: `{"dataPoints": [{"<camelType>": {..., "sampleTime": {"civilTime": {...}}}}]}`。
     HRV 値: `heartRateVariability.rootMeanSquareOfSuccessiveDifferencesMilliseconds`。
-  - **sleep は専用スコープが必要**（未付与だと 403）。現行リフレッシュトークンは sleep スコープ未取得 → 取得時は欠損。
-    → 睡眠を使うには Google 同意画面で sleep スコープを追加し再同意してリフレッシュトークンを取り直す。
-  - 実取得確認: night_avg_hr=68.4, hrv=37.2ms, next_day_steps=7456, next_day_calories=752（他はデバイス未測定/スコープ未付与で欠損）。
+  - **sleep は専用スコープ必須**（`health.sleep.readonly`）。スコープ追加→**再同意で新リフレッシュトークン取得**が必要
+    （スコープ追加だけでは既存トークンに反映されない）。2026-06-14 に sleep スコープ込みで再発行し取得成功。
+  - **sleep レスポンスは STAGES 配列**: `sleep.{interval, type:"STAGES", stages:[{type:AWAKE|LIGHT|DEEP|REM, startTime, endTime}]}`。
+    単一の sleepScore は無いため、stages から deep_sleep_min（DEEP合計）・awakenings（先頭以外のAWAKE数）を派生。sleep_score は None。
+  - 実取得確認: night_avg_hr=70.2, hrv=50.6ms, deep_sleep_min=65, awakenings=7, steps=6526, calories=646。
+  - **未対応の型ID**: skin-temperature / respiratory-rate の正確な kebab ID は未確定（取得時は欠損）。weight/body-fat は Inspire 3 が未測定。
 
 ## 未解決事項
 

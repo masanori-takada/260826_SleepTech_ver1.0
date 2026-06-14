@@ -118,24 +118,87 @@ class GoogleHealthApiSource:
 
     # ---- sleep（list、スコープ必須） ----
     def _fetch_sleep(self, date, headers):
+        """睡眠は STAGES 配列で返るため、深い睡眠時間・中途覚醒回数を派生する。
+
+        実機(Fitbit Inspire 3)レスポンス: sleep.{interval, type:"STAGES", stages:[{type,startTime,endTime}]}
+        sleep_score は本データ型に含まれないため None（別データ型が必要なら今後追加）。
+        """
+        empty = {"sleep_score": None, "deep_sleep_min": None, "awakenings": None}
         url = f"{BASE_URL}/users/me/dataTypes/{_SLEEP_TYPE}/dataPoints?" + urllib.parse.urlencode(
-            {"pageSize": 50}
+            {"pageSize": 30}
         )
         try:
             resp = self._http_get(url, headers)
         except Exception:  # noqa: BLE001 — 403(スコープ未付与) 含め欠損許容
-            return {"sleep_score": None, "deep_sleep_min": None, "awakenings": None}
-        for point in resp.get("dataPoints", []):
-            block = point.get("sleep", {})
-            return {
-                "sleep_score": block.get("sleepScore"),
-                "deep_sleep_min": block.get("deepSleepMinutes"),
-                "awakenings": block.get("awakeningsCount"),
-            }
+            return empty
+
+        point = _pick_sleep_for_date(resp.get("dataPoints", []), date)
+        if point is None:
+            return empty
+        return _derive_sleep_metrics(point.get("sleep", {}))
+
+
+# --- sleep helpers ---
+
+def _local_date(iso_utc: str, offset_str: str | None) -> str | None:
+    """UTC ISO 時刻 + UTCオフセット秒 → ローカル日付(YYYY-MM-DD)。"""
+    from datetime import datetime, timedelta
+
+    if not iso_utc:
+        return None
+    try:
+        t = datetime.fromisoformat(iso_utc.replace("Z", "+00:00"))
+        off = int(str(offset_str).rstrip("s")) if offset_str else 0
+        return (t + timedelta(seconds=off)).date().isoformat()
+    except (ValueError, TypeError):
+        return None
+
+
+def _minutes_between(a: str, b: str) -> float:
+    from datetime import datetime
+
+    ta = datetime.fromisoformat(a.replace("Z", "+00:00"))
+    tb = datetime.fromisoformat(b.replace("Z", "+00:00"))
+    return (tb - ta).total_seconds() / 60.0
+
+
+def _pick_sleep_for_date(points: list, date: str):
+    """睡眠記録のうち、ローカル起床日(=interval.endTime)が date のものを選ぶ。
+
+    無ければ最新（先頭）を返す（list は新しい順）。
+    """
+    for p in points:
+        interval = p.get("sleep", {}).get("interval", {})
+        if _local_date(interval.get("endTime"), interval.get("endUtcOffset")) == date:
+            return p
+    return points[0] if points else None
+
+
+def _derive_sleep_metrics(sleep_block: dict) -> dict:
+    """STAGES 配列から深い睡眠時間(分)と中途覚醒回数を派生。"""
+    stages = sleep_block.get("stages") or []
+    if not stages:
         return {"sleep_score": None, "deep_sleep_min": None, "awakenings": None}
 
+    deep_min = 0.0
+    awakenings = 0
+    for i, s in enumerate(stages):
+        stype = (s.get("type") or "").upper()
+        start, end = s.get("startTime"), s.get("endTime")
+        if stype == "DEEP" and start and end:
+            deep_min += _minutes_between(start, end)
+        # 睡眠開始(先頭)以外の AWAKE を中途覚醒としてカウント
+        if stype == "AWAKE" and i > 0:
+            awakenings += 1
 
-# --- helpers ---
+    return {
+        "sleep_score": None,  # STAGES データには含まれない（必要なら別データ型）
+        "deep_sleep_min": int(round(deep_min)),
+        "awakenings": awakenings,
+    }
+
+
+# --- rollup helpers ---
 
 def _date_range(date: str) -> dict:
     """CivilDateTime の閉-開区間 [date, date+1日)。"""
