@@ -29,6 +29,7 @@ class GuardrailResult(str, Enum):
 # バイタル指標のフィールド名一覧（FR-003）。欠損検出・言及検査に利用。
 VITAL_FIELDS: tuple[str, ...] = (
     "sleep_score",
+    "total_sleep_min",
     "awakenings",
     "deep_sleep_min",
     "night_avg_hr",
@@ -49,6 +50,7 @@ class DailyVitalRecord:
     date: str
     ramen_last_night: bool | None = None
     sleep_score: int | None = None
+    total_sleep_min: int | None = None   # 総睡眠時間(分)。睡眠ステージから派生
     awakenings: int | None = None
     deep_sleep_min: int | None = None
     night_avg_hr: float | None = None

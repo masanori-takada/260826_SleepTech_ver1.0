@@ -123,7 +123,8 @@ class GoogleHealthApiSource:
         実機(Fitbit Inspire 3)レスポンス: sleep.{interval, type:"STAGES", stages:[{type,startTime,endTime}]}
         sleep_score は本データ型に含まれないため None（別データ型が必要なら今後追加）。
         """
-        empty = {"sleep_score": None, "deep_sleep_min": None, "awakenings": None}
+        empty = {"sleep_score": None, "total_sleep_min": None,
+                 "deep_sleep_min": None, "awakenings": None}
         url = f"{BASE_URL}/users/me/dataTypes/{_SLEEP_TYPE}/dataPoints?" + urllib.parse.urlencode(
             {"pageSize": 30}
         )
@@ -175,24 +176,35 @@ def _pick_sleep_for_date(points: list, date: str):
 
 
 def _derive_sleep_metrics(sleep_block: dict) -> dict:
-    """STAGES 配列から深い睡眠時間(分)と中途覚醒回数を派生。"""
+    """STAGES 配列から総睡眠時間・深い睡眠時間(分)・中途覚醒回数を派生。
+
+    総睡眠時間 = AWAKE 以外（LIGHT/DEEP/REM 等）のステージ時間の合計。
+    """
     stages = sleep_block.get("stages") or []
     if not stages:
-        return {"sleep_score": None, "deep_sleep_min": None, "awakenings": None}
+        return {"sleep_score": None, "total_sleep_min": None,
+                "deep_sleep_min": None, "awakenings": None}
 
+    total_min = 0.0
     deep_min = 0.0
     awakenings = 0
     for i, s in enumerate(stages):
         stype = (s.get("type") or "").upper()
         start, end = s.get("startTime"), s.get("endTime")
-        if stype == "DEEP" and start and end:
-            deep_min += _minutes_between(start, end)
-        # 睡眠開始(先頭)以外の AWAKE を中途覚醒としてカウント
-        if stype == "AWAKE" and i > 0:
-            awakenings += 1
+        if not (start and end):
+            continue
+        dur = _minutes_between(start, end)
+        if stype == "AWAKE":
+            if i > 0:  # 睡眠開始(先頭)以外の AWAKE を中途覚醒としてカウント
+                awakenings += 1
+        else:
+            total_min += dur  # LIGHT/DEEP/REM 等は睡眠時間に算入
+            if stype == "DEEP":
+                deep_min += dur
 
     return {
         "sleep_score": None,  # STAGES データには含まれない（必要なら別データ型）
+        "total_sleep_min": int(round(total_min)),
         "deep_sleep_min": int(round(deep_min)),
         "awakenings": awakenings,
     }

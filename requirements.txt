@@ -1,6 +1,6 @@
 # Night Ramen Breakdown — Python 依存
 # 実行基盤
-boto3>=1.38
+boto3>=1.43  # agentcore Memory (bedrock-agentcore data plane/control) 対応に必須
 strands-agents>=1.43
 strands-agents-tools>=0.2
 bedrock-agentcore>=0.1

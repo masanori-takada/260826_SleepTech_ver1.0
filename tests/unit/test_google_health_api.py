@@ -126,6 +126,8 @@ def test_sleep_stages_are_derived():
     )
     raw = source.fetch_raw("2026-06-14")
     assert raw["deep_sleep_min"] == 60       # DEEP 1時間
+    # 総睡眠 = LIGHT(25) + DEEP(60) + REM(25) = 110分（AWAKE は除外）
+    assert raw["total_sleep_min"] == 110
     assert raw["awakenings"] == 1            # 先頭以外の AWAKE 1回
     assert raw["sleep_score"] is None        # STAGES には含まれない
 
