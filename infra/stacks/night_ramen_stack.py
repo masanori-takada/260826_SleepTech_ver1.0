@@ -33,6 +33,8 @@ _DEFAULT_ENV = {
     "NRB_SECRET_GOOGLE": "night-ramen/google-oauth",
     "NRB_SECRET_LINE": "night-ramen/line",
     "NRB_NIGHT_HOUR_JST": "23",
+    # agentcore Memory リソースID（002 / scripts/create_memory.py の出力）
+    "NRB_MEMORY_ID": "NightRamenMemory-t8edYf6l1T",
 }
 
 
@@ -104,7 +106,16 @@ class NightRamenStack(Stack):
             )
         )
 
-        # --- Webhook Lambda（LINE 自己申告受信 / US2）---
+        # --- boto3 Layer（Lambda 同梱 boto3 は agentcore Memory 非対応のため上書き / 002）---
+        boto3_layer = lambda_.LayerVersion(
+            self,
+            "Boto3Layer",
+            code=lambda_.Code.from_asset("layers/boto3"),
+            compatible_runtimes=[runtime],
+            description="boto3>=1.43 (bedrock-agentcore Memory 対応)",
+        )
+
+        # --- Webhook Lambda（LINE 自己申告受信 ＋ 対話エージェント / US2 + 002）---
         webhook_fn = lambda_.Function(
             self,
             "WebhookFn",
@@ -112,12 +123,32 @@ class NightRamenStack(Stack):
             runtime=runtime,
             handler="handlers.webhook_handler.handler",
             code=code,
-            timeout=Duration.seconds(30),
-            memory_size=256,
+            timeout=Duration.seconds(60),   # 会話: Memory取得＋生成の余裕（FR-111）
+            memory_size=512,
             environment=dict(_DEFAULT_ENV),
+            layers=[boto3_layer],
         )
-        table.grant_read_write_data(webhook_fn)  # REPORT の読み書き
+        table.grant_read_write_data(webhook_fn)  # REPORT 読み書き / バイタル・目標 読込
         line_secret.grant_read(webhook_fn)        # 署名検証・返信トークン
+        # Bedrock（会話生成・自己申告分類）
+        webhook_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["bedrock:InvokeModel", "bedrock:Converse"], resources=["*"]
+            )
+        )
+        # agentcore Memory（会話の STM/LTM 読み書き / 002）
+        webhook_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "bedrock-agentcore:CreateEvent",
+                    "bedrock-agentcore:ListEvents",
+                    "bedrock-agentcore:GetEvent",
+                    "bedrock-agentcore:RetrieveMemoryRecords",
+                    "bedrock-agentcore:ListMemoryRecords",
+                ],
+                resources=["*"],  # 単一 Memory 利用。ARN で絞る場合はここを限定
+            )
+        )
         # 公開 HTTPS エンドポイント（LINE Webhook URL に登録する）
         webhook_url = webhook_fn.add_function_url(
             auth_type=lambda_.FunctionUrlAuthType.NONE
