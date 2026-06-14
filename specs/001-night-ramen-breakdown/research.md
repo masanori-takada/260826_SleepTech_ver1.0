@@ -91,7 +91,22 @@
 | FR-013 | `workflow/*` + `observability.py`（相関ID） |
 | FR-016 | DynamoDB TTL / Memory 保持ポリシ（1年） |
 
+## D7-追補. Google Health API 確定仕様（2026-06-14 調査）
+
+- **Google Fit REST API は2026年末で終了**（2024-05 以降新規登録不可）。サーバー間(S2S)取得の後継は
+  **Google Health API**（Fitbit Web API の次世代）で確定。Health Connect は Android 端末ローカル専用のため不採用。
+- ベースURL: `https://health.googleapis.com/v4`
+- 取得: `POST /v4/users/me/dataTypes/{DataType}/dataPoints:dailyRollUp`（日次集計）/ `list`（生データ点）
+- データ型: `HeartRate` `HeartRateVariability` `Steps` `Weight` `BodyFat` `ActiveEnergyBurned`
+  `RespiratoryRate` `SkinTemperature` `Sleep` 等（PascalCase）
+- 認証: Google OAuth 2.0、トークン端点 `https://oauth2.googleapis.com/token`、grant_type=refresh_token
+- スコープ（読み取り最小）: `health.activity_and_fitness.readonly` / `health.health_metrics_and_measurements.readonly`
+- リフレッシュトークン失効: テスト=7日 / 本番=6ヶ月。失効時は `ConsentRevokedError` として収集停止（FR-012）
+- 実装: `collectors/google_auth_helper.py`（トークン取得）+ `collectors/google_health_api.py`（dailyRollUp 呼び出し・防御的パース）
+- **要実機検証**: データ型ごとの dailyRollUp レスポンスJSONの正確なフィールドパスは公式 codelab
+  ("Make your first Google Health API call") の実レスポンスで確認し `_DATA_TYPE_MAP` / `_extract_sleep` を調整する。
+
 ## 未解決事項
 
-- Google Health API の正式な製品名/エンドポイント仕様は実装着手時に最新ドキュメントで確認（AWS とは独立）。
 - Bedrock のモデルアクセス有効化（Opus 4.8 / Sonnet 4.6 / Haiku）はアカウント側の手動承認が必要。
+- Google Health API の dailyRollUp 実レスポンスのフィールドパス（上記 D7-追補の実機検証）。

@@ -17,26 +17,30 @@ def _today_jst() -> str:
 
 def build_morning_dependencies(settings):
     """本番依存（Google Health ソース・自己申告ソース・Memory）を組み立てる。"""
+    from night_ramen.collectors.google_health_api import GoogleHealthApiSource
     from night_ramen.collectors.self_report import StaticSelfReportSource
     from night_ramen.memory.client import MemoryClient
 
-    # 実運用では Google Health API クライアント・自己申告ストアを注入する。
-    # ここでは骨組みとして Memory と空の自己申告ソースを返す。
-    return MemoryClient(), _GoogleHealthSource(settings), StaticSelfReportSource()
+    # Secrets Manager のリフレッシュトークンからアクセストークンを供給する
+    def access_token_provider() -> str:
+        from night_ramen.collectors.google_auth_helper import get_access_token
+
+        secret = _google_secret(settings)
+        return get_access_token(secret)
+
+    health_source = GoogleHealthApiSource(access_token_provider)
+    return MemoryClient(), health_source, StaticSelfReportSource()
 
 
-class _GoogleHealthSource:
-    """Secrets Manager のトークンで Google Health から生データを取得する本番ソース。"""
+def _google_secret(settings) -> dict:
+    """Google OAuth シークレット（client_id/secret/refresh_token）を取得（FR-011）。"""
+    import json
 
-    def __init__(self, settings) -> None:
-        self._settings = settings
+    import boto3
 
-    def fetch_raw(self, date: str) -> dict:
-        # 実 API 連携は実装時に確定（research D7）。
-        # トークンは Secrets Manager から取得し、平文ログには出さない（FR-011）。
-        raise NotImplementedError(
-            "Google Health API 連携は実環境設定後に実装します（research.md D7 / 未解決事項）"
-        )
+    sm = boto3.client("secretsmanager", region_name=settings.region)
+    raw = sm.get_secret_value(SecretId=settings.secret_google)["SecretString"]
+    return json.loads(raw)
 
 
 def handler(event, context=None):
