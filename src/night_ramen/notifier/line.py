@@ -78,6 +78,38 @@ class DryRunPushClient:
         self.sent.append(text)
 
 
+def reply_message(reply_token: str, text: str, channel_access_token: str) -> None:
+    """LINE 返信 API（replyToken 利用、push と違い無料）。stdlib のみ。"""
+    import json
+    import urllib.request
+
+    body = json.dumps(
+        {"replyToken": reply_token, "messages": [{"type": "text", "text": text}]}
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.line.me/v2/bot/message/reply",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {channel_access_token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=15) as r:  # noqa: S310 — 固定の LINE 端点
+        r.read()
+
+
+def verify_line_signature(body: bytes, signature: str, channel_secret: str) -> bool:
+    """X-Line-Signature を検証（HMAC-SHA256, base64）。"""
+    import base64
+    import hashlib
+    import hmac
+
+    mac = hmac.new(channel_secret.encode("utf-8"), body, hashlib.sha256).digest()
+    expected = base64.b64encode(mac).decode("utf-8")
+    return hmac.compare_digest(expected, signature or "")
+
+
 def send_if_not_notified(
     date: str,
     text: str,

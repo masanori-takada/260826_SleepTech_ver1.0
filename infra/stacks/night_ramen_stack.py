@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from aws_cdk import (
+    CfnOutput,
     Duration,
     RemovalPolicy,
     Stack,
@@ -103,6 +104,25 @@ class NightRamenStack(Stack):
             )
         )
 
+        # --- Webhook Lambda（LINE 自己申告受信 / US2）---
+        webhook_fn = lambda_.Function(
+            self,
+            "WebhookFn",
+            function_name="NightRamen-Webhook",
+            runtime=runtime,
+            handler="handlers.webhook_handler.handler",
+            code=code,
+            timeout=Duration.seconds(30),
+            memory_size=256,
+            environment=dict(_DEFAULT_ENV),
+        )
+        table.grant_read_write_data(webhook_fn)  # REPORT の読み書き
+        line_secret.grant_read(webhook_fn)        # 署名検証・返信トークン
+        # 公開 HTTPS エンドポイント（LINE Webhook URL に登録する）
+        webhook_url = webhook_fn.add_function_url(
+            auth_type=lambda_.FunctionUrlAuthType.NONE
+        )
+
         # --- EventBridge Scheduler（JST 指定）---
         scheduler_role = iam.Role(
             self,
@@ -132,3 +152,6 @@ class NightRamenStack(Stack):
                 arn=night_fn.function_arn, role_arn=scheduler_role.role_arn
             ),
         )
+
+        # LINE Developers Console の Webhook URL に登録する公開エンドポイント
+        CfnOutput(self, "WebhookUrl", value=webhook_url.url, description="LINE Webhook URL")

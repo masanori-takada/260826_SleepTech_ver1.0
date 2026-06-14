@@ -110,7 +110,9 @@ def run_night(date: str, deps: NightDependencies) -> PersuasionMessage:
         log.log("message_generated", guardrail=result.value)
 
     # 送信（通過かつ未通知時のみ, FR-007,014）
-    delivered = send_if_not_notified(date, body, deps.idempotency, deps.push_client)
+    # 自己申告を促す固定の質問文を付加（翌朝の収集が REPORT を読み取り紐づける / US2）。
+    sent_body = body + "\n\n―――\n（翌朝でOK）昨夜ラーメンは「食べた」？「我慢した」？返信で教えてね🍜"
+    delivered = send_if_not_notified(date, sent_body, deps.idempotency, deps.push_client)
     log.log("notify", delivered=delivered)
 
     msg = PersuasionMessage(

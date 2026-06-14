@@ -18,7 +18,7 @@ def _today_jst() -> str:
 def build_morning_dependencies(settings):
     """本番依存（Google Health ソース・自己申告ソース・Memory）を組み立てる。"""
     from night_ramen.collectors.google_health_api import GoogleHealthApiSource
-    from night_ramen.collectors.self_report import StaticSelfReportSource
+    from night_ramen.collectors.self_report import DynamoSelfReportSource
     from night_ramen.memory.client import MemoryClient
     from night_ramen.memory.dynamo_backend import DynamoMemoryBackend
 
@@ -33,7 +33,8 @@ def build_morning_dependencies(settings):
     backend = DynamoMemoryBackend(
         settings.dynamodb_table, settings.region, settings.vital_retention_days
     )
-    return MemoryClient(backend), health_source, StaticSelfReportSource()
+    report_source = DynamoSelfReportSource(settings.dynamodb_table, settings.region)
+    return MemoryClient(backend), health_source, report_source
 
 
 def _google_secret(settings) -> dict:

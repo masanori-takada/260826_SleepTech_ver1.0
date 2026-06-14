@@ -1,0 +1,244 @@
+{
+  "/NightRamenStack": [
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "Kernel._Kernel_create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:62547)",
+        "Kernel.create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:53277)",
+        "KernelHost.processRequest (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:219206)",
+        "KernelHost.run (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218261)",
+        "Immediate._onImmediate (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218305)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/NightRamenStack/NightRamenTable": [
+    {
+      "type": "aws:cdk:hasPhysicalName",
+      "data": {
+        "Ref": "NightRamenTable7B75347E"
+      }
+    }
+  ],
+  "/NightRamenStack/MorningSchedule": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "MorningSchedule"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "Kernel._Kernel_create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:62547)",
+        "Kernel.create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:53277)",
+        "KernelHost.processRequest (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:219206)",
+        "KernelHost.run (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218261)",
+        "Immediate._onImmediate (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218305)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/NightRamenStack/NightSchedule": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "NightSchedule"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "Kernel._Kernel_create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:62547)",
+        "Kernel.create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:53277)",
+        "KernelHost.processRequest (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:219206)",
+        "KernelHost.run (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218261)",
+        "Immediate._onImmediate (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218305)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/NightRamenStack/BootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "BootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/NightRamenStack/CheckBootstrapVersion": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CheckBootstrapVersion"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/NightRamenStack/NightRamenTable/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "NightRamenTable7B75347E"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Table2 in aws-cdk-lib...",
+        "Kernel._Kernel_create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:62547)",
+        "Kernel.create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:53277)",
+        "KernelHost.processRequest (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:219206)",
+        "KernelHost.run (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218261)",
+        "Immediate._onImmediate (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218305)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/NightRamenStack/MorningFn/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "MorningFnEC0167FD"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Function2 in aws-cdk-lib...",
+        "Kernel._Kernel_create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:62547)",
+        "Kernel.create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:53277)",
+        "KernelHost.processRequest (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:219206)",
+        "KernelHost.run (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218261)",
+        "Immediate._onImmediate (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218305)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/NightRamenStack/NightFn/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "NightFn8CDFA2F1"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Function2 in aws-cdk-lib...",
+        "Kernel._Kernel_create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:62547)",
+        "Kernel.create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:53277)",
+        "KernelHost.processRequest (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:219206)",
+        "KernelHost.run (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218261)",
+        "Immediate._onImmediate (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218305)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/NightRamenStack/SchedulerRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SchedulerRole59E73443"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Role2 in aws-cdk-lib...",
+        "Kernel._Kernel_create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:62547)",
+        "Kernel.create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:53277)",
+        "KernelHost.processRequest (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:219206)",
+        "KernelHost.run (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218261)",
+        "Immediate._onImmediate (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218305)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/NightRamenStack/CDKMetadata/Default": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "CDKMetadata"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...App.synth in aws-cdk-lib...",
+        "C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:556 (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:5561)",
+        "Kernel._Kernel_ensureSync (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:71163)"
+      ]
+    }
+  ],
+  "/NightRamenStack/MorningFn/ServiceRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "MorningFnServiceRoleEB1B5747"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Function2 in aws-cdk-lib...",
+        "Kernel._Kernel_create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:62547)",
+        "Kernel.create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:53277)",
+        "KernelHost.processRequest (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:219206)",
+        "KernelHost.run (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218261)",
+        "Immediate._onImmediate (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218305)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/NightRamenStack/NightFn/ServiceRole/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "NightFnServiceRoleFBDB479D"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...new Function2 in aws-cdk-lib...",
+        "Kernel._Kernel_create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:62547)",
+        "Kernel.create (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:53277)",
+        "KernelHost.processRequest (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:219206)",
+        "KernelHost.run (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218261)",
+        "Immediate._onImmediate (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:218305)",
+        "...node internals..."
+      ]
+    }
+  ],
+  "/NightRamenStack/SchedulerRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "SchedulerRoleDefaultPolicy66F774B8"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...WrappedClass.grantInvoke in aws-cdk-lib...",
+        "C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:556 (C:\\Users\\ユーザー\\AppData\\Local\\Temp\\tmppjlstey2\\lib\\program.js:1:5561)"
+      ]
+    }
+  ],
+  "/NightRamenStack/MorningFn/ServiceRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "MorningFnServiceRoleDefaultPolicy47D437A7"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ],
+  "/NightRamenStack/NightFn/ServiceRole/DefaultPolicy/Resource": [
+    {
+      "type": "aws:cdk:logicalId",
+      "data": "NightFnServiceRoleDefaultPolicyAF1FAE84"
+    },
+    {
+      "type": "aws:cdk:creationStack",
+      "data": [
+        "...aws-cdk-lib...",
+        "(no user code in 10 frames, use --stack-trace-limit to capture more)"
+      ]
+    }
+  ]
+}
