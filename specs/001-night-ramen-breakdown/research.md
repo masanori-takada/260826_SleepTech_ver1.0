@@ -103,8 +103,17 @@
 - スコープ（読み取り最小）: `health.activity_and_fitness.readonly` / `health.health_metrics_and_measurements.readonly`
 - リフレッシュトークン失効: テスト=7日 / 本番=6ヶ月。失効時は `ConsentRevokedError` として収集停止（FR-012）
 - 実装: `collectors/google_auth_helper.py`（トークン取得）+ `collectors/google_health_api.py`（dailyRollUp 呼び出し・防御的パース）
-- **要実機検証**: データ型ごとの dailyRollUp レスポンスJSONの正確なフィールドパスは公式 codelab
-  ("Make your first Google Health API call") の実レスポンスで確認し `_DATA_TYPE_MAP` / `_extract_sleep` を調整する。
+- **実機確定（2026-06-14, Fitbit Inspire 3 で検証済み）**:
+  - データ型IDは **kebab-case**（`heart-rate`, `active-energy-burned`, `heart-rate-variability`, `steps`, `weight`, `body-fat`, `sleep`）。
+  - dailyRollUp リクエスト: `{"range": {"start": {"date": {...}}, "end": {"date": {...}}}, "windowSizeDays": 1}`（CivilDateTime は `date` 入れ子）。
+  - dailyRollUp レスポンス: `{"rollupDataPoints": [{"civilStartTime": {...}, "<camelType>": {"<field>": ...}}]}`。
+    値フィールド例: `steps.countSum`(文字列), `heartRate.beatsPerMinuteAvg`, `activeEnergyBurned.kcalSum`。
+  - **dailyRollUp 非対応の型**: `sleep`, `heart-rate-variability` → `list`(GET) を使う。
+    list レスポンス: `{"dataPoints": [{"<camelType>": {..., "sampleTime": {"civilTime": {...}}}}]}`。
+    HRV 値: `heartRateVariability.rootMeanSquareOfSuccessiveDifferencesMilliseconds`。
+  - **sleep は専用スコープが必要**（未付与だと 403）。現行リフレッシュトークンは sleep スコープ未取得 → 取得時は欠損。
+    → 睡眠を使うには Google 同意画面で sleep スコープを追加し再同意してリフレッシュトークンを取り直す。
+  - 実取得確認: night_avg_hr=68.4, hrv=37.2ms, next_day_steps=7456, next_day_calories=752（他はデバイス未測定/スコープ未付与で欠損）。
 
 ## 未解決事項
 

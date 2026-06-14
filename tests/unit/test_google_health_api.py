@@ -40,40 +40,70 @@ def test_get_access_token_invalid_grant_raises_permission():
 
 # ---- Health API 取得・パース ----
 
-def _fake_post_factory(responses: dict):
-    """data_type 名 → レスポンスJSON のマップから HTTP POST フェイクを作る。"""
+# 実機（Fitbit Inspire 3, 2026-06-14 確認）のレスポンス形状を再現するフェイク
+
+def _fake_post_factory(rollups: dict):
+    """型ID → rollupDataPoints レスポンス のマップから dailyRollUp POST フェイクを作る。"""
 
     def fake_post(url, headers, body):
         assert headers["Authorization"].startswith("Bearer ")
-        for dt, resp in responses.items():
-            if f"/dataTypes/{dt}/" in url:
+        for type_id, resp in rollups.items():
+            if f"/dataTypes/{type_id}/" in url:
                 return resp
-        return {"dataPoints": []}
+        return {"rollupDataPoints": []}
 
     return fake_post
 
 
-def test_fetch_raw_maps_metrics():
-    responses = {
-        "HeartRate": {"dataPoints": [{"value": {"avg": {"bpm": 58.0}}}]},
-        "Steps": {"dataPoints": [{"value": {"sum": {"count": 8200}}}]},
-        "Weight": {"dataPoints": [{"value": {"latest": {"kilograms": 71.4}}}]},
-        "Sleep": {"dataPoints": [{"value": {"sleepScore": 82,
-                                            "deepSleepMinutes": 95,
-                                            "awakeningsCount": 1}}]},
+def _fake_get_factory(lists: dict):
+    """型ID → dataPoints レスポンス のマップから list GET フェイクを作る。"""
+
+    def fake_get(url, headers):
+        for type_id, resp in lists.items():
+            if f"/dataTypes/{type_id}/" in url:
+                return resp
+        return {"dataPoints": []}
+
+    return fake_get
+
+
+def _rollup(camel, field, value, date="2026-06-14"):
+    y, m, d = (int(x) for x in date.split("-"))
+    return {"rollupDataPoints": [
+        {"civilStartTime": {"date": {"year": y, "month": m, "day": d}},
+         camel: {field: value}}
+    ]}
+
+
+def test_fetch_raw_maps_real_shapes():
+    rollups = {
+        "heart-rate": _rollup("heartRate", "beatsPerMinuteAvg", 58.5),
+        "steps": _rollup("steps", "countSum", "8200"),            # countSum は文字列
+        "active-energy-burned": _rollup("activeEnergyBurned", "kcalSum", 752.5),
+    }
+    lists = {
+        "heart-rate-variability": {"dataPoints": [
+            {"heartRateVariability": {
+                "sampleTime": {"civilTime": {"date": {"year": 2026, "month": 6, "day": 14}}},
+                "rootMeanSquareOfSuccessiveDifferencesMilliseconds": 40.0}},
+            {"heartRateVariability": {
+                "sampleTime": {"civilTime": {"date": {"year": 2026, "month": 6, "day": 14}}},
+                "rootMeanSquareOfSuccessiveDifferencesMilliseconds": 50.0}},
+        ]},
     }
     source = GoogleHealthApiSource(
         access_token_provider=lambda: "ya29.fake",
-        http_post=_fake_post_factory(responses),
+        http_post=_fake_post_factory(rollups),
+        http_get=_fake_get_factory(lists),
     )
     raw = source.fetch_raw("2026-06-14")
-    assert raw["night_avg_hr"] == 58.0
-    assert raw["next_day_steps"] == 8200
-    assert raw["weight_kg"] == 71.4
-    assert raw["sleep_score"] == 82
-    assert raw["deep_sleep_min"] == 95
-    # 取得しなかった型は欠損(None)
-    assert raw["body_fat_pct"] is None
+    assert raw["night_avg_hr"] == 58.5
+    assert raw["next_day_steps"] == 8200          # 文字列→int
+    assert raw["next_day_calories"] == 752        # float→int
+    assert raw["hrv"] == 45.0                      # (40+50)/2
+    # データの無い型は欠損(None)
+    assert raw["weight_kg"] is None
+    assert raw["sleep_score"] is None
 
 
 def test_fetch_raw_token_failure_is_consent_revoked():
@@ -86,16 +116,13 @@ def test_fetch_raw_token_failure_is_consent_revoked():
 
 
 def test_integration_with_fetch_daily_vitals():
-    # 実APIソース → fetch_daily_vitals（異常値除外・欠損記録）まで通す
-    responses = {
-        "HeartRate": {"dataPoints": [{"value": {"avg": {"bpm": 999}}}]},  # 異常値
-        "Sleep": {"dataPoints": [{"value": {"sleepScore": 78}}]},
-    }
+    # 異常値(心拍999)は除外され欠損記録される（FR-015）
+    rollups = {"heart-rate": _rollup("heartRate", "beatsPerMinuteAvg", 999)}
     source = GoogleHealthApiSource(
         access_token_provider=lambda: "t",
-        http_post=_fake_post_factory(responses),
+        http_post=_fake_post_factory(rollups),
+        http_get=_fake_get_factory({}),
     )
     rec = fetch_daily_vitals("2026-06-14", source)
-    assert rec.night_avg_hr is None          # 異常値は除外（FR-015）
+    assert rec.night_avg_hr is None
     assert "night_avg_hr" in rec.missing_fields
-    assert rec.sleep_score == 78
