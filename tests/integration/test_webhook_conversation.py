@@ -120,6 +120,49 @@ def test_dangerous_reply_is_blocked(captured_replies):
     assert "無能" not in captured_replies[0]   # 危険応答は送信されない（FR-106）
 
 
+def test_report_saved_to_past_date(captured_replies):
+    """「6/12 食べた」のような過去日付指定は当日でなく該当日に記録される（記録漏れ補完）。"""
+    from night_ramen.config import load_settings
+    from importlib import import_module
+    wh = import_module("handlers.webhook_handler")
+    log = _Log()
+
+    def responder(model_id, prompt, system):
+        if "分類器" in system:
+            return "yes"
+        if "日付抽出器" in system:
+            return "2026-06-12"   # 正規表現で確定するため通常呼ばれない（保険）
+        return "6/12のラーメンありを記録したよ。教えてくれてありがとう。"
+
+    deps = _deps(make_fake_invoker(responder))
+    wh._handle_message(_event("6/12 食べた"), deps, "tok", load_settings(), log)
+
+    saved = deps["report"].saved
+    assert len(saved) == 1
+    (date_key, val), = saved.items()
+    assert date_key.endswith("-06-12")          # 6/12 に保存（年は実行時 today 依存）
+    assert val is True
+    assert date_key != wh._today_jst()          # 当日ではなく過去日付
+
+
+def test_report_no_date_defaults_today(captured_replies):
+    """日付指定が無い従来発話は当日に記録される（回帰・完全互換）。"""
+    from night_ramen.config import load_settings
+    from importlib import import_module
+    wh = import_module("handlers.webhook_handler")
+    log = _Log()
+
+    def responder(model_id, prompt, system):
+        if "分類器" in system:
+            return "yes"
+        return "記録したよ。"
+
+    deps = _deps(make_fake_invoker(responder))
+    wh._handle_message(_event("食べちゃった"), deps, "tok", load_settings(), log)
+
+    assert deps["report"].saved.get(wh._today_jst()) is True
+
+
 class _Log:
     def log(self, *a, **k):
         pass

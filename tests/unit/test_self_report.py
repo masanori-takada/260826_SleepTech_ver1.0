@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from night_ramen.collectors.self_report import is_wakeup_trigger, parse_ramen_reply
+from night_ramen.collectors.self_report import (
+    is_wakeup_trigger,
+    parse_ramen_reply,
+    parse_report_date,
+)
 from night_ramen.notifier.line import verify_line_signature
 
 
@@ -58,3 +62,24 @@ def test_signature_verification():
     assert verify_line_signature(body, sig, secret) is True
     assert verify_line_signature(body, "wrong", secret) is False
     assert verify_line_signature(b'{"tampered":1}', sig, secret) is False
+
+
+def test_parse_report_date_relative():
+    # 相対表現（過去日付の記録漏れ補完）
+    assert parse_report_date("おととい食べた", "2026-06-15") == "2026-06-13"
+    assert parse_report_date("昨日は我慢した", "2026-06-15") == "2026-06-14"
+    assert parse_report_date("今日のラーメン", "2026-06-15") == "2026-06-15"
+    assert parse_report_date("3日前に食べちゃった", "2026-06-15") == "2026-06-12"
+
+
+def test_parse_report_date_explicit():
+    assert parse_report_date("6/12 あり", "2026-06-15") == "2026-06-12"
+    assert parse_report_date("6月12日は食べた", "2026-06-15") == "2026-06-12"
+    assert parse_report_date("12日のやつ", "2026-06-15") == "2026-06-12"
+    # 未来の月日は直近の過去（前年）として解釈
+    assert parse_report_date("12/30の分", "2026-06-15") == "2025-12-30"
+
+
+def test_parse_report_date_none_when_no_date():
+    assert parse_report_date("食べた", "2026-06-15") is None
+    assert parse_report_date("お腹すいたな", "2026-06-15") is None

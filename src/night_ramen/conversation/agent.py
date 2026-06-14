@@ -33,6 +33,7 @@ class ConversationContext:
     vitals_summary: str = ""
     goal_summary: str = ""
     today: str = ""   # 今日の日付(JST)。「昨日」等の相対表現の解決に用いる
+    just_recorded: str = ""   # 今回の発話で記録した申告（例「6/12のラーメン: あり」）。確認応答用
 
 
 def _fmt_minutes(m: int | None) -> str:
@@ -69,13 +70,16 @@ def summarize_vitals(vitals: list[DailyVitalRecord], recent_days: int = 7) -> st
     return f"直近{len(recent)}日のバイタル（新しい行ほど最近）:\n{lines}\n（この期間でラーメン{ramen_days}回）"
 
 
-def build_context(recent_turns, ltm_snippets, vitals, goal: Goal, today: str = "") -> ConversationContext:
+def build_context(
+    recent_turns, ltm_snippets, vitals, goal: Goal, today: str = "", just_recorded: str = ""
+) -> ConversationContext:
     return ConversationContext(
         recent_turns=recent_turns,
         ltm_snippets=ltm_snippets,
         vitals_summary=summarize_vitals(vitals),
         goal_summary=f"成功率目標 {goal.success_rate_target:.0%} / 減量 {goal.weight_loss_target_kg}kg",
         today=today,
+        just_recorded=just_recorded,
     )
 
 
@@ -86,8 +90,14 @@ def generate_reply(
     history = "\n".join(f"{t['role']}: {t['text']}" for t in ctx.recent_turns)
     ltm = "\n".join(f"- {s}" for s in ctx.ltm_snippets) or "（特になし）"
     today_line = f"【今日の日付】{ctx.today}（「昨日」はこの前日を指す）\n" if ctx.today else ""
+    recorded_line = (
+        f"【今ユーザーが記録した申告】{ctx.just_recorded}。これを一言で確認してから返答する。\n"
+        if ctx.just_recorded
+        else ""
+    )
     prompt = (
         f"{today_line}"
+        f"{recorded_line}"
         f"【ユーザーについて記憶していること】\n{ltm}\n\n"
         f"【最近の会話】\n{history or '（なし）'}\n\n"
         f"【バイタルデータ（日付別。睡眠時間や歩数などの質問にはこの数値で答える）】\n{ctx.vitals_summary}\n\n"

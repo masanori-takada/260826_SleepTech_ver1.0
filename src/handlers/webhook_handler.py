@@ -148,7 +148,7 @@ def _handle_message(ev, deps, token, settings, log) -> None:
         build_context,
         generate_reply,
     )
-    from night_ramen.conversation.extractor import extract_ramen_report
+    from night_ramen.conversation.extractor import extract_ramen_report, resolve_report_date
     from night_ramen.guardrail.validator import GuardrailContext, generate_safe_message
     from night_ramen.memory.schemas import GuardrailResult
     from night_ramen.notifier.line import reply_message
@@ -161,12 +161,16 @@ def _handle_message(ev, deps, token, settings, log) -> None:
     invoker = deps["invoker"]
     model = settings.models.conversation_model
 
-    # 2. 自己申告抽出（併用）→ REPORT 保存（FR-105）。分類は高速な Haiku を使用
+    # 2. 自己申告抽出（併用）→ REPORT 保存（FR-105）。分類は高速な Haiku を使用。
+    #    日付が明示/相対で書かれていれば過去日付に記録（記録漏れ補完）。無ければ当日(date)。
     ramen = extract_ramen_report(text, invoker, settings.models.classifier_model)
+    just_recorded = ""
     if ramen is not None:
+        report_date = resolve_report_date(text, date, invoker, settings.models.classifier_model)
         try:
-            deps["report"].put(date, ramen)
-            log.log("webhook_report_saved", date=date, ramen=ramen)
+            deps["report"].put(report_date, ramen)
+            log.log("webhook_report_saved", date=report_date, ramen=ramen)
+            just_recorded = f"{report_date} のラーメン: {'あり' if ramen else 'なし'}"
         except Exception:  # noqa: BLE001
             log.log("webhook_report_save_failed")
 
@@ -182,7 +186,7 @@ def _handle_message(ev, deps, token, settings, log) -> None:
     ltm = memory.retrieve_ltm(actor_id, session_id, query=text, top_k=3) if memory else []
     since = (date_cls.fromisoformat(date) - td(days=30)).isoformat()
     vitals = deps["vitals_client"].get_vitals(since, date)
-    ctx = build_context(recent_turns, ltm, vitals, deps["goal"], today=date)
+    ctx = build_context(recent_turns, ltm, vitals, deps["goal"], today=date, just_recorded=just_recorded)
 
     # 4. 応答生成 → ガードレール（送信前必須, FR-106）
     g_ctx = GuardrailContext(goal_summary=ctx.goal_summary)
