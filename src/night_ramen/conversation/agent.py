@@ -44,22 +44,30 @@ def _fmt_minutes(m: int | None) -> str:
 
 
 def _day_line(v: DailyVitalRecord) -> str:
-    """1日分を日別の読みやすい1行に整形（特定日の質問に答えられるよう日付付き）。"""
+    """1日分を日別の読みやすい1行に整形（特定日の質問に答えられるよう日付付き）。
+
+    体重・体脂肪率・夜間平均心拍も含める。これらが欠けていると会話エージェントが
+    値を参照できず「連携できていない」と誤って答えてしまうため（測定日のみ値、他は「—」）。
+    """
     ramen = {True: "ラーメン有", False: "我慢", None: "申告なし"}[v.ramen_last_night]
     sleep = _fmt_minutes(v.total_sleep_min)
     deep = f"{v.deep_sleep_min}分" if v.deep_sleep_min is not None else "—"
     hrv = f"{v.hrv}ms" if v.hrv is not None else "—"
     awak = f"{v.awakenings}回" if v.awakenings is not None else "—"
     steps = v.next_day_steps if v.next_day_steps is not None else "—"
+    hr = f"{v.night_avg_hr:.0f}" if v.night_avg_hr is not None else "—"
+    weight = f"{v.weight_kg}kg" if v.weight_kg is not None else "—"
+    fat = f"{v.body_fat_pct}%" if v.body_fat_pct is not None else "—"
     return (f"{v.date}: 睡眠{sleep}(深い{deep}/中途覚醒{awak}) "
-            f"HRV{hrv} 翌日歩数{steps} {ramen}")
+            f"HRV{hrv} 夜間心拍{hr} 体重{weight} 体脂肪{fat} 翌日歩数{steps} {ramen}")
 
 
-def summarize_vitals(vitals: list[DailyVitalRecord], recent_days: int = 7) -> str:
+def summarize_vitals(vitals: list[DailyVitalRecord], recent_days: int = 30) -> str:
     """直近バイタルを日別の文脈文字列へ整形（FR-104）。
 
     「昨日の睡眠時間は？」のような特定日の質問に答えられるよう、
-    直近数日を日付付きで列挙する。
+    直近数日を日付付きで列挙する。体重・体脂肪率は毎日測るとは限らないため、
+    直近の測定値を末尾に別途明示し、「最近の体重は？」に即答できるようにする。
     """
     usable = [v for v in vitals if v.has_any_vitals]
     if not usable:
@@ -67,7 +75,19 @@ def summarize_vitals(vitals: list[DailyVitalRecord], recent_days: int = 7) -> st
     recent = usable[-recent_days:]
     lines = "\n".join(_day_line(v) for v in recent)
     ramen_days = sum(1 for v in recent if v.ramen_last_night is True)
-    return f"直近{len(recent)}日のバイタル（新しい行ほど最近）:\n{lines}\n（この期間でラーメン{ramen_days}回）"
+
+    # 体重・体脂肪は測定日が散発的なため、期間内の最新測定値を明示（質問への即答用）
+    latest_w = next((v for v in reversed(recent) if v.weight_kg is not None), None)
+    latest_f = next((v for v in reversed(recent) if v.body_fat_pct is not None), None)
+    extras = []
+    if latest_w is not None:
+        extras.append(f"最新体重 {latest_w.weight_kg}kg（{latest_w.date}測定）")
+    if latest_f is not None:
+        extras.append(f"最新体脂肪 {latest_f.body_fat_pct}%（{latest_f.date}測定）")
+    extra_line = ("\n" + " / ".join(extras)) if extras else ""
+
+    return (f"直近{len(recent)}日のバイタル（新しい行ほど最近）:\n{lines}\n"
+            f"（この期間でラーメン{ramen_days}回）{extra_line}")
 
 
 def build_context(
