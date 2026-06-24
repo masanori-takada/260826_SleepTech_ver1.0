@@ -52,13 +52,21 @@ def get_ramen_self_report(date: str, source: SelfReportSource) -> bool | None:
 _YES_WORDS = ("食べた", "たべた", "食べちゃった", "はい", "yes", "あり", "1")
 _NO_WORDS = ("食べてない", "食べなかった", "我慢", "がまん", "いいえ", "no", "なし", "0")
 
+# 申告ではなく質問・指摘・抗議を示す語。これらを含む場合は None を返し LLM 判定に委ねる。
+# 「食べたことになってる？」のような確認メッセージで誤検知しないために必要。
+_NON_REPORT_WORDS = ("ことになってる", "ことになった", "になってる", "になってた",
+                     "なんで", "なぜ", "どういうこと", "おかしい")
+
 
 def parse_ramen_reply(text: str) -> bool | None:
     """ユーザー返信を ramen 有無に解釈する。判定できなければ None。
 
     否定（食べてない）を先に判定する（「食べてない」は「食べ」を含むため）。
+    質問・指摘文脈（「食べたことになってる？」等）は None を返し LLM に委ねる。
     """
     t = text.strip().lower()
+    if any(w in t for w in _NON_REPORT_WORDS):
+        return None
     if any(w in t for w in _NO_WORDS):
         return False
     if any(w in t for w in _YES_WORDS):
