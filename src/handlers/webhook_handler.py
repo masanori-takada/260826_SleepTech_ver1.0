@@ -184,7 +184,8 @@ def _handle_message(ev, deps, token, settings, log) -> None:
     memory = deps["memory"]
     recent_turns = memory.get_recent_turns(actor_id, session_id, k=6) if memory else []
     ltm = memory.retrieve_ltm(actor_id, session_id, query=text, top_k=3) if memory else []
-    since = (date_cls.fromisoformat(date) - td(days=30)).isoformat()
+    # 月次サマリ用に記録開始(2025-12)まで遡る。保持は365日のため370日前まで取れば全保持分を網羅。
+    since = (date_cls.fromisoformat(date) - td(days=370)).isoformat()
     vitals = deps["vitals_client"].get_vitals(since, date)
     ctx = build_context(recent_turns, ltm, vitals, deps["goal"], today=date, just_recorded=just_recorded)
 

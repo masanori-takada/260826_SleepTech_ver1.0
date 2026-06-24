@@ -62,21 +62,61 @@ def _day_line(v: DailyVitalRecord) -> str:
             f"HRV{hrv} 夜間心拍{hr} 体重{weight} 体脂肪{fat} 翌日歩数{steps} {ramen}")
 
 
-def summarize_vitals(vitals: list[DailyVitalRecord], recent_days: int = 30) -> str:
-    """直近バイタルを日別の文脈文字列へ整形（FR-104）。
+def _avg(vals: list) -> float | None:
+    """None を除外した平均。値が無ければ None。"""
+    nums = [x for x in vals if x is not None]
+    return sum(nums) / len(nums) if nums else None
 
-    「昨日の睡眠時間は？」のような特定日の質問に答えられるよう、
-    直近数日を日付付きで列挙する。体重・体脂肪率は毎日測るとは限らないため、
-    直近の測定値を末尾に別途明示し、「最近の体重は？」に即答できるようにする。
+
+def _monthly_summary(vitals: list[DailyVitalRecord]) -> str:
+    """直近より前のバイタルを年月(YYYY-MM)ごとの平均へ圧縮する（新しい月ほど上）。
+
+    体重・体脂肪・睡眠・歩数の平均とラーメン回数。各項目は値のある日だけで平均し、
+    無ければ「—」。過去の生データを全期間出すとトークンが嵩むため、過去はこれで代替する。
+    """
+    if not vitals:
+        return ""
+    from collections import defaultdict
+
+    groups: dict[str, list] = defaultdict(list)
+    for v in vitals:
+        groups[v.date[:7]].append(v)  # YYYY-MM 単位でグループ化
+
+    lines = []
+    for ym in sorted(groups, reverse=True):  # 新しい月が上
+        days = groups[ym]
+        w = _avg([d.weight_kg for d in days])
+        f = _avg([d.body_fat_pct for d in days])
+        s = _avg([d.total_sleep_min for d in days])
+        steps = _avg([d.next_day_steps for d in days])
+        ramen = sum(1 for d in days if d.ramen_last_night is True)
+        parts = [
+            f"体重{round(w, 1)}kg" if w is not None else "体重—",
+            f"体脂肪{round(f, 1)}%" if f is not None else "体脂肪—",
+            f"睡眠{_fmt_minutes(int(round(s)))}" if s is not None else "睡眠—",
+            f"歩数{int(round(steps))}" if steps is not None else "歩数—",
+            f"ラーメン{ramen}回",
+        ]
+        lines.append(f"{ym}: 平均 " + " ".join(parts))
+    return "\n".join(lines)
+
+
+def summarize_vitals(vitals: list[DailyVitalRecord], recent_days: int = 30) -> str:
+    """直近バイタルを文脈文字列へ整形（FR-104）。
+
+    直近 recent_days 日は日別で全項目を列挙し、それより前〜記録開始(2025-12)は
+    月次平均に圧縮して付加する。これで過去まで遡れるが応答トークンは抑えられる。
+    体重・体脂肪は測定日が散発的なため、直近の測定値も末尾に明示する。
     """
     usable = [v for v in vitals if v.has_any_vitals]
     if not usable:
         return "（バイタルデータはまだ十分にありません）"
     recent = usable[-recent_days:]
+    older = usable[:-recent_days]
     lines = "\n".join(_day_line(v) for v in recent)
     ramen_days = sum(1 for v in recent if v.ramen_last_night is True)
 
-    # 体重・体脂肪は測定日が散発的なため、期間内の最新測定値を明示（質問への即答用）
+    # 体重・体脂肪は測定日が散発的なため、直近期間内の最新測定値を明示（質問への即答用）
     latest_w = next((v for v in reversed(recent) if v.weight_kg is not None), None)
     latest_f = next((v for v in reversed(recent) if v.body_fat_pct is not None), None)
     extras = []
@@ -86,8 +126,12 @@ def summarize_vitals(vitals: list[DailyVitalRecord], recent_days: int = 30) -> s
         extras.append(f"最新体脂肪 {latest_f.body_fat_pct}%（{latest_f.date}測定）")
     extra_line = ("\n" + " / ".join(extras)) if extras else ""
 
+    # 直近より前は月次平均に圧縮（記録開始まで遡れるがトークンを抑える）
+    monthly = _monthly_summary(older)
+    monthly_block = f"\n\nそれ以前の月次サマリ（新しい月ほど上）:\n{monthly}" if monthly else ""
+
     return (f"直近{len(recent)}日のバイタル（新しい行ほど最近）:\n{lines}\n"
-            f"（この期間でラーメン{ramen_days}回）{extra_line}")
+            f"（この期間でラーメン{ramen_days}回）{extra_line}{monthly_block}")
 
 
 def build_context(
