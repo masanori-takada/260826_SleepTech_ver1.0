@@ -123,11 +123,12 @@ class GoogleHealthApiSource:
 
         実機(Fitbit Inspire 3)レスポンス: sleep.{interval, type:"STAGES", stages:[{type,startTime,endTime}]}
         sleep_score は本データ型に含まれないため None（別データ型が必要なら今後追加）。
+        pageSize=500: 仮眠も1件扱いになるため余裕を持たせ約1年分をカバーする。
         """
         empty = {"sleep_score": None, "total_sleep_min": None,
                  "deep_sleep_min": None, "awakenings": None}
         url = f"{BASE_URL}/users/me/dataTypes/{_SLEEP_TYPE}/dataPoints?" + urllib.parse.urlencode(
-            {"pageSize": 30}
+            {"pageSize": 500}
         )
         try:
             resp = self._http_get(url, headers)
@@ -167,13 +168,14 @@ def _minutes_between(a: str, b: str) -> float:
 def _pick_sleep_for_date(points: list, date: str):
     """睡眠記録のうち、ローカル起床日(=interval.endTime)が date のものを選ぶ。
 
-    無ければ最新（先頭）を返す（list は新しい順）。
+    一致するものがなければ None（欠損扱い）。フォールバックで別日付のデータを
+    返すと全日付に同一値が記録される誤りを防ぐ。
     """
     for p in points:
         interval = p.get("sleep", {}).get("interval", {})
         if _local_date(interval.get("endTime"), interval.get("endUtcOffset")) == date:
             return p
-    return points[0] if points else None
+    return None
 
 
 def _derive_sleep_metrics(sleep_block: dict) -> dict:
