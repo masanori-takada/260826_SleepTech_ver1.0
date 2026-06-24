@@ -25,13 +25,14 @@ from night_ramen.collectors import ConsentRevokedError
 
 BASE_URL = "https://health.googleapis.com/v4"
 
-# --- dailyRollUp 系（POST）: field -> (型ID, camelキー, 値フィールド, キャスト) ---
-_ROLLUP_MAP: dict[str, tuple[str, str, str, type]] = {
-    "night_avg_hr": ("heart-rate", "heartRate", "beatsPerMinuteAvg", float),
-    "next_day_steps": ("steps", "steps", "countSum", int),
-    "next_day_calories": ("active-energy-burned", "activeEnergyBurned", "kcalSum", int),
-    "weight_kg": ("weight", "weight", "kilogramsAvg", float),
-    "body_fat_pct": ("body-fat", "bodyFat", "percentageAvg", float),
+# --- dailyRollUp 系（POST）: field -> (型ID, camelキー, 値フィールド, キャスト, スケール) ---
+# スケール: APIが返す単位からストア単位への変換係数（通常1.0、体重のみグラム→kg で0.001）
+_ROLLUP_MAP: dict[str, tuple[str, str, str, type, float]] = {
+    "night_avg_hr": ("heart-rate", "heartRate", "beatsPerMinuteAvg", float, 1.0),
+    "next_day_steps": ("steps", "steps", "countSum", int, 1.0),
+    "next_day_calories": ("active-energy-burned", "activeEnergyBurned", "kcalSum", int, 1.0),
+    "weight_kg": ("weight", "weight", "weightGramsAvg", float, 0.001),      # API単位=グラム
+    "body_fat_pct": ("body-fat", "bodyFat", "bodyFatPercentageAvg", float, 1.0),
 }
 
 # --- list 系（GET）: field -> (型ID, camelキー, 値フィールド) ---
@@ -69,8 +70,8 @@ class GoogleHealthApiSource:
         raw: dict = {}
 
         # dailyRollUp 系
-        for field, (type_id, camel, value_field, cast) in _ROLLUP_MAP.items():
-            raw[field] = self._fetch_rollup(date, type_id, camel, value_field, cast, headers)
+        for field, (type_id, camel, value_field, cast, scale) in _ROLLUP_MAP.items():
+            raw[field] = self._fetch_rollup(date, type_id, camel, value_field, cast, scale, headers)
 
         # list 系（HRV）
         for field, (type_id, camel, value_field) in _LIST_MAP.items():
@@ -81,7 +82,7 @@ class GoogleHealthApiSource:
         return raw
 
     # ---- dailyRollUp ----
-    def _fetch_rollup(self, date, type_id, camel, value_field, cast, headers):
+    def _fetch_rollup(self, date, type_id, camel, value_field, cast, scale, headers):
         url = f"{BASE_URL}/users/me/dataTypes/{type_id}/dataPoints:dailyRollUp"
         body = {"range": _date_range(date), "windowSizeDays": 1}
         try:
@@ -90,11 +91,11 @@ class GoogleHealthApiSource:
             return None
         for point in resp.get("rollupDataPoints", []):
             if _point_date(point.get("civilStartTime")) == date:
-                return _cast(point.get(camel, {}).get(value_field), cast)
+                return _scale(_cast(point.get(camel, {}).get(value_field), cast), scale)
         # 日付一致が無ければ最初の点を採用（範囲が単日のとき）
         points = resp.get("rollupDataPoints", [])
         if points:
-            return _cast(points[0].get(camel, {}).get(value_field), cast)
+            return _scale(_cast(points[0].get(camel, {}).get(value_field), cast), scale)
         return None
 
     # ---- list（平均集計） ----
@@ -247,6 +248,13 @@ def _cast(value, cast: type):
         return cast(float(value)) if cast is int else cast(value)
     except (TypeError, ValueError):
         return None
+
+
+def _scale(value, factor: float):
+    """単位変換係数を適用する（factor=1.0 のときは無変換）。"""
+    if value is None or factor == 1.0:
+        return value
+    return round(value * factor, 3)
 
 
 def _default_http_post(url: str, headers: dict, body: dict) -> dict:

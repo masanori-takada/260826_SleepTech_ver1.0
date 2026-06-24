@@ -132,6 +132,22 @@ def test_sleep_stages_are_derived():
     assert raw["sleep_score"] is None        # STAGES には含まれない
 
 
+def test_fetch_raw_weight_and_body_fat():
+    # API はグラム返し → kg 換算(×0.001)、体脂肪はそのまま
+    rollups = {
+        "weight":   _rollup("weight",  "weightGramsAvg",         65000.0),
+        "body-fat": _rollup("bodyFat", "bodyFatPercentageAvg",   18.5),
+    }
+    source = GoogleHealthApiSource(
+        access_token_provider=lambda: "t",
+        http_post=_fake_post_factory(rollups),
+        http_get=_fake_get_factory({}),
+    )
+    raw = source.fetch_raw("2026-06-14")
+    assert raw["weight_kg"] == pytest.approx(65.0, rel=1e-3)
+    assert raw["body_fat_pct"] == pytest.approx(18.5, rel=1e-3)
+
+
 def test_fetch_raw_token_failure_is_consent_revoked():
     def bad_token():
         raise PermissionError("invalid_grant")
