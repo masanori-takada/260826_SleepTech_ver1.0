@@ -78,6 +78,40 @@ class DryRunPushClient:
         self.sent.append(text)
 
 
+def push_ramen_question(date: str, channel_access_token: str, user_id: str) -> None:
+    """朝の申告質問をクイックリプライボタン付きで push 送信する。
+
+    date: 今日の日付(YYYY-MM-DD)。「昨夜」= 前日を表示し食欲減退させる。
+    """
+    import json
+    import urllib.request
+    from datetime import date as _date, timedelta
+
+    prev = (_date.fromisoformat(date) - timedelta(days=1)).isoformat()
+    message = {
+        "type": "text",
+        "text": f"おはようございます！昨夜（{prev}）はラーメン食べましたか？",
+        "quickReply": {
+            "items": [
+                {"type": "action", "action": {"type": "message", "label": "食べた", "text": "食べた"}},
+                {"type": "action", "action": {"type": "message", "label": "我慢した！", "text": "我慢した"}},
+            ]
+        },
+    }
+    body = json.dumps({"to": user_id, "messages": [message]}).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.line.me/v2/bot/message/push",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {channel_access_token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=15) as r:  # noqa: S310 — 固定の LINE 端点
+        r.read()
+
+
 def reply_message(reply_token: str, text: str, channel_access_token: str) -> None:
     """LINE 返信 API（replyToken 利用、push と違い無料）。stdlib のみ。"""
     import json

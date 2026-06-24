@@ -173,6 +173,9 @@ def _handle_message(ev, deps, token, settings, log) -> None:
             just_recorded = f"{report_date} のラーメン: {'あり' if ramen else 'なし'}"
         except Exception:  # noqa: BLE001
             log.log("webhook_report_save_failed")
+        # 当日申告なら vitals を即時更新（朝の質問ボタン押下後に ramen_last_night を反映）
+        if report_date == date:
+            _collect_today_vitals(date, settings, log)
 
     # 2.5 起床トリガー: 8時を待たず当日バイタルを先行収集（Feature 003 / FR-003）。
     #     文脈構築の前に収集するので、会話エージェントが当日の最新データを踏まえて応答する。

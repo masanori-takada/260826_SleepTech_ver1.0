@@ -37,6 +37,32 @@ def build_morning_dependencies(settings):
     return MemoryClient(backend), health_source, report_source
 
 
+def _line_secret(settings) -> dict:
+    import json
+
+    import boto3
+
+    sm = boto3.client("secretsmanager", region_name=settings.region)
+    return json.loads(sm.get_secret_value(SecretId=settings.secret_line)["SecretString"])
+
+
+def _send_morning_question(date: str, settings) -> None:
+    """朝の申告質問をクイックリプライ付きで LINE push 送信する（ベストエフォート）。
+
+    失敗しても朝ループの結果には影響させない。
+    """
+    try:
+        from night_ramen.notifier.line import push_ramen_question
+
+        secret = _line_secret(settings)
+        token = secret.get("channel_access_token", "")
+        user_id = secret.get("user_id", "")
+        if token and user_id:
+            push_ramen_question(date, token, user_id)
+    except Exception:  # noqa: BLE001 — 送信失敗で朝ループを止めない
+        pass
+
+
 def _google_secret(settings) -> dict:
     """Google OAuth シークレット（client_id/secret/refresh_token）を取得（FR-011）。"""
     import json
@@ -57,6 +83,7 @@ def handler(event, context=None):
     from night_ramen.workflow.morning import run_morning
 
     record = run_morning(date, memory, health_source, report_source)
+    _send_morning_question(date, settings)
     return {
         "date": date,
         "collected": record is not None,
