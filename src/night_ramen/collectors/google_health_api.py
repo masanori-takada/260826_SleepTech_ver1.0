@@ -98,44 +98,64 @@ class GoogleHealthApiSource:
             return _scale(_cast(points[0].get(camel, {}).get(value_field), cast), scale)
         return None
 
-    # ---- list（平均集計） ----
+    # ---- list（平均集計）---- ページネーション対応
     def _fetch_list_avg(self, date, type_id, camel, value_field, headers):
-        url = f"{BASE_URL}/users/me/dataTypes/{type_id}/dataPoints?" + urllib.parse.urlencode(
-            {"pageSize": 1000}
-        )
-        try:
-            resp = self._http_get(url, headers)
-        except Exception:  # noqa: BLE001
-            return None
+        """全ページを取得してから date に一致するポイントだけ平均する。
+
+        Google Health API は pageSize を指定しても1ページに少数しか返さない場合があり、
+        nextPageToken でページネーションしないと直近分しか取れない（実測: HRV 1000件/ページ→12ページ）。
+        """
         vals = []
-        for point in resp.get("dataPoints", []):
-            block = point.get(camel, {})
-            civ = block.get("sampleTime", {}).get("civilTime")
-            if civ is None or _civil_date_str(civ) == date:
-                v = block.get(value_field)
-                if v is not None:
-                    vals.append(v)
+        next_token = None
+        while True:
+            params: dict = {"pageSize": 1000}
+            if next_token:
+                params["pageToken"] = next_token
+            url = f"{BASE_URL}/users/me/dataTypes/{type_id}/dataPoints?" + urllib.parse.urlencode(params)
+            try:
+                resp = self._http_get(url, headers)
+            except Exception:  # noqa: BLE001
+                break
+            for point in resp.get("dataPoints", []):
+                block = point.get(camel, {})
+                civ = block.get("sampleTime", {}).get("civilTime")
+                if civ is None or _civil_date_str(civ) == date:
+                    v = block.get(value_field)
+                    if v is not None:
+                        vals.append(v)
+            next_token = resp.get("nextPageToken")
+            if not next_token:
+                break
         return round(sum(vals) / len(vals), 2) if vals else None
 
-    # ---- sleep（list、スコープ必須） ----
+    # ---- sleep（list、スコープ必須）---- ページネーション対応
     def _fetch_sleep(self, date, headers):
         """睡眠は STAGES 配列で返るため、深い睡眠時間・中途覚醒回数を派生する。
 
         実機(Fitbit Inspire 3)レスポンス: sleep.{interval, type:"STAGES", stages:[{type,startTime,endTime}]}
         sleep_score は本データ型に含まれないため None（別データ型が必要なら今後追加）。
-        pageSize=500: 仮眠も1件扱いになるため余裕を持たせ約1年分をカバーする。
+        ページネーション必須: pageSize=500 でも1ページ13〜25件しか返らず nextPageToken あり（実測）。
+        全ページを取得してから対象日を探すことで6ヶ月分以上をカバーする。
         """
         empty = {"sleep_score": None, "total_sleep_min": None,
                  "deep_sleep_min": None, "awakenings": None}
-        url = f"{BASE_URL}/users/me/dataTypes/{_SLEEP_TYPE}/dataPoints?" + urllib.parse.urlencode(
-            {"pageSize": 500}
-        )
-        try:
-            resp = self._http_get(url, headers)
-        except Exception:  # noqa: BLE001 — 403(スコープ未付与) 含め欠損許容
-            return empty
+        all_points: list = []
+        next_token = None
+        while True:
+            params: dict = {"pageSize": 500}
+            if next_token:
+                params["pageToken"] = next_token
+            url = f"{BASE_URL}/users/me/dataTypes/{_SLEEP_TYPE}/dataPoints?" + urllib.parse.urlencode(params)
+            try:
+                resp = self._http_get(url, headers)
+            except Exception:  # noqa: BLE001 — 403(スコープ未付与) 含め欠損許容
+                return empty
+            all_points.extend(resp.get("dataPoints", []))
+            next_token = resp.get("nextPageToken")
+            if not next_token:
+                break
 
-        point = _pick_sleep_for_date(resp.get("dataPoints", []), date)
+        point = _pick_sleep_for_date(all_points, date)
         if point is None:
             return empty
         return _derive_sleep_metrics(point.get("sleep", {}))

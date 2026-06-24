@@ -4,12 +4,19 @@ backfill_weight_bodyfat.py は「DynamoDB に既存レコードがある日付�
 本スクリプトは指定期間の**全日付**について run_morning を実行し、レコードが無い日も新規収集する。
 save_vital は上書き保存（冪等）なので既存日付に再実行しても安全。
 
+⚠️  --protect-existing なしで再実行すると、API に存在しないフィールド（睡眠・HRV 等）が
+    DynamoDB の既存 non-null 値を None で上書きする。バグ修正後の再収集では必ず
+    --protect-existing を付けること。
+
 使い方:
     python scripts/collect_range.py [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--dry-run]
+    python scripts/collect_range.py --protect-existing  # 既存 non-null 値を保護して再収集
 
 既定: --since 2025-12-22, --until 今日(JST)
 --dry-run: 収集は実行するが DynamoDB へ保存しない（run_morning は保存するため、
            dry-run では収集件数の見積もりのみ＝実際には日付一覧の表示に留める）
+--protect-existing: 既存レコードの non-null フィールドを API から取れなくなった null で
+                    上書きしない（睡眠・HRV 等 API 保持期間が短い指標の保護に使う）
 """
 
 from __future__ import annotations
@@ -39,6 +46,8 @@ def main():
     parser.add_argument("--since", default="2025-12-22", help="収集開始日 YYYY-MM-DD")
     parser.add_argument("--until", default=_today_jst(), help="収集終了日 YYYY-MM-DD（既定=今日JST）")
     parser.add_argument("--dry-run", action="store_true", help="対象日一覧のみ表示し収集しない")
+    parser.add_argument("--protect-existing", action="store_true",
+                        help="既存 non-null 値を null で上書きしない（睡眠・HRV 保護用）")
     args = parser.parse_args()
 
     dates = list(_daterange(args.since, args.until))
@@ -48,6 +57,8 @@ def main():
         print("[dry-run] 収集は実行しません。対象日数のみ表示しました。")
         return
 
+    import json
+    import boto3
     from handlers.morning_handler import build_morning_dependencies
     from night_ramen.collectors import ConsentRevokedError
     from night_ramen.config import load_settings
@@ -55,6 +66,11 @@ def main():
 
     settings = load_settings()
     memory, health_source, report_source = build_morning_dependencies(settings)
+
+    ddb_table = None
+    if args.protect_existing:
+        ddb_table = boto3.resource("dynamodb", region_name=settings.region).Table(settings.dynamodb_table)
+        print("[protect-existing] 既存 non-null フィールドを保護して収集します")
 
     collected = 0
     consent_stopped = 0
@@ -64,6 +80,18 @@ def main():
     for date in dates:
         try:
             record = run_morning(date, memory, health_source, report_source)
+            # --protect-existing: API から取れなくなった null が既存 non-null を上書きするのを防ぐ
+            if args.protect_existing and record is not None and ddb_table is not None:
+                item = ddb_table.get_item(Key={"PK": "MEM#vitals", "SK": date}).get("Item")
+                if item:
+                    existing = json.loads(item.get("json", "{}"))
+                    patched = False
+                    for field, val in existing.items():
+                        if val is not None and record.to_dict().get(field) is None:
+                            setattr(record, field, val)
+                            patched = True
+                    if patched:
+                        memory.save_vital(record)
         except ConsentRevokedError:
             print(f"[{date}] 同意失効 → 収集停止")
             consent_stopped += 1
