@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta, date as date_cls
 
-from night_ramen.agents import analyzer, persuader
+from night_ramen.agents import analyzer, persuader, topics
 from night_ramen.agents.prompts import ModelInvoker
 from night_ramen.config import Settings
 from night_ramen.goals import evaluator
@@ -23,7 +23,6 @@ from night_ramen.memory.schemas import (
     Goal,
     PersuasionMessage,
     Tone,
-    VITAL_FIELDS,
 )
 from night_ramen.notifier.line import (
     IdempotencyStore,
@@ -43,26 +42,17 @@ class NightDependencies:
     idempotency: IdempotencyStore
     push_client: PushClient
     lookback_days: int = 30
+    # 話題ローテーション（FR-007）: 何晩分の履歴を見て、毎晩いくつの指標を主役にするか
+    topic_history_limit: int = 14
+    focus_metric_count: int = 2
 
 
 def _referenced_metrics(text: str) -> list[str]:
-    """本文が言及したバイタル指標名を抽出（SC-004 計測用）。"""
-    jp = {
-        "sleep_score": "睡眠",
-        "hrv": "HRV",
-        "deep_sleep_min": "深い睡眠",
-        "next_day_steps": "歩数",
-        "next_day_calories": "カロリー",
-        "weight_kg": "体重",
-        "respiration_rate": "呼吸",
-        "night_avg_hr": "心拍",
-    }
-    hits = []
-    for field in VITAL_FIELDS:
-        kw = jp.get(field)
-        if kw and kw in text:
-            hits.append(field)
-    return hits
+    """本文が言及したバイタル指標名を抽出（SC-004 計測用）。
+
+    キーワード定義は agents.topics に集約（話題ローテーションと同じ定義を使う）。
+    """
+    return topics.detect_metrics(text)
 
 
 def run_night(date: str, deps: NightDependencies) -> PersuasionMessage:
@@ -81,6 +71,9 @@ def run_night(date: str, deps: NightDependencies) -> PersuasionMessage:
         f"減量{deps.goal.weight_loss_target_kg}kg"
     )
 
+    focus_metrics: list[str] = []
+    angle_id = ""
+
     if not has_data:
         # データ全欠損 → 個別化せず安全文面（FR-015）
         log.log("no_data_fallback")
@@ -98,11 +91,35 @@ def run_night(date: str, deps: NightDependencies) -> PersuasionMessage:
         tone = evaluator.choose_tone(progress)
         log.log("goal_evaluated", success_rate=progress.success_rate, tone=tone.value)
 
+        # 今夜の話題を選ぶ（FR-007）。直近の説得履歴を見て、前夜と違う指標・切り口にする。
+        history = deps.memory.get_recent_messages(limit=deps.topic_history_limit)
+        available = topics.available_metrics(vitals)
+        has_reports = any(v.ramen_last_night is not None for v in vitals)
+        focus_metrics = topics.select_focus_metrics(
+            date, available, history, count=deps.focus_metric_count
+        )
+        angle = topics.select_angle(date, focus_metrics, has_reports, history)
+        angle_id = angle.id
+        avoid_metrics = topics.recently_used_metrics(date, history)
+        log.log(
+            "topic_selected",
+            focus=",".join(focus_metrics),
+            angle=angle_id,
+            available=len(available),
+        )
+
         # 生成 → ガードレール（最大2回再生成, FR-009）
         def _gen() -> str:
             current = deps.memory.get_current_strategy()
             return persuader.generate_message(
-                current, analysis, tone, deps.invoker, deps.settings.models.persuader_model
+                current,
+                analysis,
+                tone,
+                deps.invoker,
+                deps.settings.models.persuader_model,
+                focus_metrics=focus_metrics,
+                angle=angle,
+                avoid_metrics=avoid_metrics,
             )
 
         body, result = generate_safe_message(_gen, ctx, deps.settings.max_regenerations)
@@ -124,6 +141,8 @@ def run_night(date: str, deps: NightDependencies) -> PersuasionMessage:
         referenced_metrics=_referenced_metrics(body),
         delivered=delivered,
         sent_at=now_iso(),
+        focus_metrics=focus_metrics,
+        angle=angle_id,
     )
     deps.memory.save_message(msg)
 
@@ -131,7 +150,13 @@ def run_night(date: str, deps: NightDependencies) -> PersuasionMessage:
     if has_data:
         _maybe_update_strategy(date, deps, ctx, log)
 
-    log.log("night_done", delivered=delivered, guardrail=result.value)
+    log.log(
+        "night_done",
+        delivered=delivered,
+        guardrail=result.value,
+        angle=angle_id,
+        referenced=",".join(msg.referenced_metrics),
+    )
     return msg
 
 

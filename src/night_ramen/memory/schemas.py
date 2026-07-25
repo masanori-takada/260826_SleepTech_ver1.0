@@ -89,13 +89,20 @@ class Goal:
 
 @dataclass
 class AnalysisResult:
-    """E5: ラーメンの悪影響の推論・数値化（FR-004）。"""
+    """E5: ラーメンの悪影響の推論・数値化（FR-004）。
+
+    impacts はラーメン有/無の平均比較、metric_stats は指標ごとの記述統計
+    （最新値・直近平均・トレンド・自己ベスト）。behavior は我慢の申告サマリ。
+    説得メッセージの話題を毎晩変えるため、全 VITAL_FIELDS 分を保持する。
+    """
 
     date: str
     impacts: list[dict[str, Any]] = field(default_factory=list)
     summary: str = ""
     model_id: str = ""
     analyzed_at: str | None = None
+    metric_stats: list[dict[str, Any]] = field(default_factory=list)
+    behavior: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -110,6 +117,10 @@ class PersuasionMessage:
     referenced_metrics: list[str] = field(default_factory=list)
     delivered: bool = False
     sent_at: str | None = None
+    # 話題ローテーション用（FR-007）: その夜に主役として指示した指標と語りの切り口。
+    # referenced_metrics（本文からの検出）と併せて「次に何を話すか」の判断材料になる。
+    focus_metrics: list[str] = field(default_factory=list)
+    angle: str = ""
 
 
 @dataclass
