@@ -1,11 +1,13 @@
 """カフェインと光曝露の時刻算出（仕様 第6節）。"""
 
 import math
+import typing
 
 import pytest
 
 from sleeptech.model import constants as C
 from sleeptech.model import recovery
+from sleeptech.memory.schemas import RecoveryPlan
 
 WAKE_H = 31.0        # 翌日 7:00
 NEXT_BED_H = 47.5    # 翌日 23:30
@@ -78,3 +80,8 @@ def test_cutoff_formula_is_exact():
     got = recovery.caffeine_cutoff(NEXT_BED_H)
     hours = -C.CAFFEINE_HALF_LIFE_H * math.log2(C.CAFFEINE_BEDTIME_RATIO)
     assert got == round(NEXT_BED_H - hours, 3)
+
+
+def test_recovery_plan_caffeine_times_are_typed_as_float_list():
+    """公開インターフェースのカフェイン時刻型は float のリストである。"""
+    assert typing.get_type_hints(RecoveryPlan)["caffeine_times_h"] == list[float]

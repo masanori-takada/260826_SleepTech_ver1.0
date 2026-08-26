@@ -97,3 +97,35 @@ python -m pytest -q
 ### 修正ラウンド1時点の懸念
 
 裁定によりテスト入力を仕様に整合する値へ修正したため、前回の算術矛盾は解消した。実装・定数の追加懸念はない。
+
+## 修正ラウンド2
+
+### 変更
+
+- 公開Interfaceに合わせ、`RecoveryPlan.caffeine_times_h` を `list` から `list[float]` に修正。
+- `typing.get_type_hints()` で公開型を固定する回帰テストを追加。
+- runtimeロジック、`constants.py`、既存の計算式は変更なし。
+
+### RED
+
+コマンド:
+
+    python -m pytest tests/unit/test_recovery.py -v
+
+結果: `11 items` 中 `10 passed, 1 failed`。新規テストが `list` と `list[float]` の不一致で失敗。
+
+### GREEN
+
+型注釈を1行修正後のコマンド:
+
+    python -m pytest tests/unit/test_recovery.py -v
+    11 passed in 0.18s
+
+### 全スイート
+
+    python -m pytest -q
+    48 passed in 0.34s
+
+### 修正ラウンド2時点の懸念
+
+なし。公開Interfaceの型注釈と回帰テストが一致し、実装ロジックと定数は裁定どおり不変。

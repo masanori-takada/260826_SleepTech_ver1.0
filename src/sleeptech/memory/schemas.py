@@ -80,7 +80,7 @@ class RecoveryPlan:
     caffeine_times_h が空リストのときは「カフェインは勧めない」を意味する。
     """
 
-    caffeine_times_h: list
+    caffeine_times_h: list[float]
     caffeine_cutoff_h: float
     light_morning_h: float
     light_avoid_after_h: float
