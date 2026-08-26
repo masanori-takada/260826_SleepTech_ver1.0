@@ -103,6 +103,25 @@ def test_night_handler_rejects_invalid_or_mixed_scheduled_input(monkeypatch, eve
     assert calls == []
 
 
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"scheduledtime": "2026-08-26T13:30:00Z"},
+        {"scheduled_time": "2026-08-26T13:30:00Z", "extra": True},
+        {"date": "2026-08-26", "now_h": 22.5, "extra": True},
+        [],
+        "not-an-event-object",
+    ],
+)
+def test_night_handler_rejects_unknown_keys_and_non_mapping_events(monkeypatch, event):
+    calls = _patch_night_dependencies(monkeypatch)
+
+    result = nh.handler(event)
+
+    assert result["statusCode"] == 400
+    assert calls == []
+
+
 def _webhook_event(events):
     return {"body": json.dumps({"events": events}, ensure_ascii=False)}
 

@@ -51,10 +51,16 @@ def _pair(event: Mapping) -> tuple[str, float] | None:
 
 
 def handler(event, context=None) -> dict:
-    if event is None:
-        event = {}
     if not isinstance(event, Mapping):
         return _bad_request("event must be an object")
+
+    event_keys = frozenset(event)
+    if event_keys not in {
+        frozenset(),
+        frozenset({"scheduled_time"}),
+        frozenset({"date", "now_h"}),
+    }:
+        return _bad_request("event contains unknown keys")
 
     has_scheduled = "scheduled_time" in event
     has_date = "date" in event
