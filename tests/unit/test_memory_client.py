@@ -7,6 +7,10 @@ from sleeptech.memory.dynamo_backend import DynamoBackend
 from sleeptech.memory.schemas import DailyVital, Feedback, Prediction
 
 
+class _ConditionalCheckFailedException(Exception):
+    """DynamoDB の条件不成立を模したテスト例外。"""
+
+
 def _client() -> MemoryClient:
     return MemoryClient(InMemoryBackend())
 
@@ -52,10 +56,24 @@ def test_save_and_get_prediction_by_slot():
 def test_idempotency_is_per_date_and_slot():
     c = _client()
     assert c.is_notified("2026-08-26", "NIGHT") is False
-    c.mark_notified("2026-08-26", "NIGHT")
+    assert c.mark_notified("2026-08-26", "NIGHT") is True
     assert c.is_notified("2026-08-26", "NIGHT") is True
+    assert c.mark_notified("2026-08-26", "NIGHT") is False
     assert c.is_notified("2026-08-26", "MORNING") is False
     assert c.is_notified("2026-08-27", "NIGHT") is False
+
+
+def test_mark_notified_propagates_non_conditional_errors():
+    class FailingBackend(InMemoryBackend):
+        def put_conditional(self, pk, sk, value, ttl_days=None):
+            raise RuntimeError("DynamoDB unavailable")
+
+    try:
+        MemoryClient(FailingBackend()).mark_notified("2026-08-26", "NIGHT")
+    except RuntimeError as exc:
+        assert str(exc) == "DynamoDB unavailable"
+    else:
+        raise AssertionError("非 Conditional 例外が伝播していない")
 
 
 def test_save_and_get_feedback():
@@ -108,7 +126,7 @@ def test_dynamo_query_range_uses_between_and_follows_pages():
     }
 
 
-def test_dynamo_put_wraps_values_as_json_and_applies_ttl():
+def test_dynamo_put_wraps_values_without_implicit_ttl():
     table = Mock()
     resource = Mock()
     resource.Table.return_value = table
@@ -120,4 +138,77 @@ def test_dynamo_put_wraps_values_as_json_and_applies_ttl():
     assert item["pk"] == "VITAL"
     assert item["sk"] == "2026-08-26"
     assert item["json"] == '{"wake_h": 31.0}'
-    assert item["ttl"] == 173800
+    assert "ttl" not in item
+
+
+def test_dynamo_conditional_put_returns_true_or_false_for_typed_failure():
+    table = Mock()
+    table.meta.client.exceptions.ConditionalCheckFailedException = _ConditionalCheckFailedException
+    resource = Mock()
+    resource.Table.return_value = table
+    with patch("boto3.resource", return_value=resource):
+        backend = DynamoBackend("table", "ap-northeast-1")
+
+    assert backend.put_conditional("IDEM#NIGHT", "2026-08-26", {"slot": "NIGHT"}) is True
+    table.put_item.side_effect = _ConditionalCheckFailedException()
+    assert backend.put_conditional("IDEM#NIGHT", "2026-08-26", {"slot": "NIGHT"}) is False
+    condition = table.put_item.call_args_list[0].kwargs["ConditionExpression"]
+    assert condition.get_expression()["operator"] == "attribute_not_exists"
+
+
+def test_dynamo_conditional_put_propagates_non_conditional_error():
+    table = Mock()
+    table.meta.client.exceptions.ConditionalCheckFailedException = _ConditionalCheckFailedException
+    table.put_item.side_effect = RuntimeError("DynamoDB unavailable")
+    resource = Mock()
+    resource.Table.return_value = table
+    with patch("boto3.resource", return_value=resource):
+        backend = DynamoBackend("table", "ap-northeast-1")
+
+    try:
+        backend.put_conditional("IDEM#NIGHT", "2026-08-26", {"slot": "NIGHT"})
+    except RuntimeError as exc:
+        assert str(exc) == "DynamoDB unavailable"
+    else:
+        raise AssertionError("非 Conditional 例外が伝播していない")
+
+
+def test_memory_client_vital_only_receives_365_day_ttl():
+    table = Mock()
+    table.meta.client.exceptions.ConditionalCheckFailedException = _ConditionalCheckFailedException
+    resource = Mock()
+    resource.Table.return_value = table
+    with patch("boto3.resource", return_value=resource), patch("time.time", return_value=1000):
+        backend = DynamoBackend("table", "ap-northeast-1", ttl_days=365)
+        client = MemoryClient(backend)
+        client.save_vital(DailyVital(date="2026-08-26", total_sleep_min=330))
+        client.save_prediction(Prediction(date="2026-08-26", slot="NIGHT"))
+        client.save_feedback(Feedback(date="2026-08-26", score=4))
+        client.save_config({"override_wake_h": 30.0})
+        client.mark_notified("2026-08-26", "NIGHT")
+
+    put_items = [call.kwargs["Item"] for call in table.put_item.call_args_list]
+    assert put_items[0]["ttl"] == 1000 + 365 * 86400
+    assert all("ttl" not in item for item in put_items[1:])
+
+
+def test_query_desc_continues_when_short_page_has_last_key():
+    table = Mock()
+    table.query.side_effect = [
+        {"Items": [{"json": '{"date": "2026-08-26"}'}], "LastEvaluatedKey": {"pk": "VITAL", "sk": "2026-08-26"}},
+        {"Items": [{"json": '{"date": "2026-08-25"}'}, {"json": '{"date": "2026-08-24"}'}]},
+    ]
+    resource = Mock()
+    resource.Table.return_value = table
+    with patch("boto3.resource", return_value=resource):
+        backend = DynamoBackend("table", "ap-northeast-1")
+
+    assert backend.query_desc("VITAL", limit=2) == [
+        {"date": "2026-08-26"},
+        {"date": "2026-08-25"},
+    ]
+    assert table.query.call_args_list[1].kwargs["ExclusiveStartKey"] == {
+        "pk": "VITAL",
+        "sk": "2026-08-26",
+    }
+    assert table.query.call_args_list[1].kwargs["Limit"] == 1
