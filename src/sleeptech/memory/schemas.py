@@ -71,3 +71,16 @@ class BedtimeAdvice:
     mean_drop_pct: int
     curve: list[HourlyDrop]
     status: str
+
+
+@dataclass(frozen=True)
+class RecoveryPlan:
+    """朝フローが提示するリカバリー行動の時刻。
+
+    caffeine_times_h が空リストのときは「カフェインは勧めない」を意味する。
+    """
+
+    caffeine_times_h: list
+    caffeine_cutoff_h: float
+    light_morning_h: float
+    light_avoid_after_h: float
