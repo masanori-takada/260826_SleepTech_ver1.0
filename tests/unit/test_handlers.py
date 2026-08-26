@@ -49,6 +49,60 @@ def test_night_handler_uses_explicit_pair_for_delayed_eventbridge_run(monkeypatc
     assert calls == [("2026-08-26", 28.5, "deps")]
 
 
+def test_night_handler_derives_scheduled_time_in_jst_for_retry(monkeypatch):
+    calls = _patch_night_dependencies(monkeypatch)
+    monkeypatch.setattr(
+        nh.hd,
+        "jst_now",
+        lambda: datetime(2026, 8, 27, 4, 30, tzinfo=JST),
+    )
+
+    result = nh.handler({"scheduled_time": "2026-08-26T13:30:00Z"})
+
+    assert result == {"ok": True}
+    assert calls == [("2026-08-26", 22.5, "deps")]
+
+
+def test_night_handler_derives_offset_scheduled_time_in_jst(monkeypatch):
+    calls = _patch_night_dependencies(monkeypatch)
+
+    nh.handler({"scheduled_time": "2026-08-26T15:30:00+02:00"})
+
+    assert calls == [("2026-08-26", 22.5, "deps")]
+
+
+def test_night_handler_uses_wall_clock_for_manual_fallback(monkeypatch):
+    calls = _patch_night_dependencies(monkeypatch)
+    monkeypatch.setattr(
+        nh.hd,
+        "jst_now",
+        lambda: datetime(2026, 8, 26, 22, 30, tzinfo=JST),
+    )
+
+    nh.handler({})
+
+    assert calls == [("2026-08-26", 22.5, "deps")]
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"scheduled_time": "2026-08-26T13:30:00Z", "date": "2026-08-26", "now_h": 22.5},
+        {"scheduled_time": "2026-08-26T13:30:00Z", "date": "2026-08-26"},
+        {"scheduled_time": "2026-08-26T13:30:00Z", "now_h": 22.5},
+        {"scheduled_time": 123},
+        {"scheduled_time": "not-an-iso-time"},
+    ],
+)
+def test_night_handler_rejects_invalid_or_mixed_scheduled_input(monkeypatch, event):
+    calls = _patch_night_dependencies(monkeypatch)
+
+    result = nh.handler(event)
+
+    assert result["statusCode"] == 400
+    assert calls == []
+
+
 def _webhook_event(events):
     return {"body": json.dumps({"events": events}, ensure_ascii=False)}
 
