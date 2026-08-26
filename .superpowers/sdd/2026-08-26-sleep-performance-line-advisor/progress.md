@@ -64,3 +64,9 @@
   - `channel_secret` is read from the existing `sleeptech/line` Secrets Manager JSON; `channel_access_token` and `user_id` contracts remain unchanged.
   - Verification: `python -m pytest -q` passed 315 tests; `git diff --check` passed.
   - AWS deploy, Secrets registration, external API calls, LINE real-device verification, and old Scheduler stop were not performed. Remaining Task 17 work is blocked on credentials, user approval, and external state.
+
+- Task 17: local security gate complete (commits 21f31de..4e6ca86, review clean after one fix round).
+  - Round 1: malformed signatures return 403; malformed signed JSON/payload contract returns 400; `events: []` returns 200; raw-body regression tests cover formatting, escaping, emoji, and one-byte mutation; report corrected.
+  - Controller fresh verification: `python -m pytest -q` = 326 passed; `git diff --check` succeeded; `cdk synth SleepTechStack` exited 0.
+  - Remaining external/manual work: Secrets registration including `channel_secret`, `cdk diff/deploy`, LINE Webhook configuration, night/morning/LINE real-device verification, and stopping the existing NightRamen Scheduler. User credentials and explicit confirmation are required before these actions.
+  - Playwright is not applicable: no browser UI is under local control; LINE Developers console and manual device steps remain user/external work.
