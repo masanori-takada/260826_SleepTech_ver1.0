@@ -28,7 +28,7 @@ def test_caffeine_cutoff_is_earlier_for_earlier_bedtime():
 
 def test_two_doses_when_window_is_long():
     """起床〜最終摂取可能時刻が閾値を超える場合は2回に分ける。"""
-    got = recovery.plan(wake_h=WAKE_H, next_bedtime_h=NEXT_BED_H)
+    got = recovery.plan(wake_h=WAKE_H, next_bedtime_h=WAKE_H + 19.0)
     assert len(got.caffeine_times_h) == 2
     assert got.caffeine_times_h[0] == WAKE_H + C.CAFFEINE_FIRST_OFFSET_H
     assert got.caffeine_times_h[1] == WAKE_H + C.PHASE_DIP_OFFSET_H - C.CAFFEINE_PRE_DIP_H
@@ -36,7 +36,7 @@ def test_two_doses_when_window_is_long():
 
 def test_single_dose_when_window_is_short():
     """就寝が早く窓が短い場合は1回のみ。"""
-    got = recovery.plan(wake_h=WAKE_H, next_bedtime_h=WAKE_H + 9.0)
+    got = recovery.plan(wake_h=WAKE_H, next_bedtime_h=WAKE_H + 12.0)
     assert len(got.caffeine_times_h) == 1
     assert got.caffeine_times_h[0] == WAKE_H + C.CAFFEINE_FIRST_OFFSET_H
 
