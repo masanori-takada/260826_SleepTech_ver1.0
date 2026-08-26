@@ -12,7 +12,7 @@
 - EventBridge Schedulerを2個作成（JST、Night 22:30、Morning 08:00、FlexibleTimeWindow=OFF）。
 - Night Target.Inputを`{"scheduled_time":"<aws.scheduler.scheduled-time>"}`に設定。MorningはInputなし。
 - Secrets Managerの既存シークレット3件を名前参照し、各LambdaへGetSecretValue権限を付与。値のコード・環境変数直書きはしていない。
-- Webhook Function URLは仕様どおりAuthType=NONE。LINE署名検証はver1 scope外。
+- Webhook Function URLは仕様どおりAuthType=NONE。LINE署名検証はTask 16のスコープ外。Task 17の公開前必須ゲート。
 - 旧`NightRamenStack` importを`SleepTechStack`へ置換。
 - `requirements.txt`からstrands/agentcore等の旧依存を整理し、boto3/CDK/pytest/motoを維持。CDK用`infra/requirements.txt`も追加。
 
@@ -77,7 +77,7 @@ LINE署名検証は公開前必須のTask17セキュリティゲート。未実�
 - CDK `AssetStaging`を使い、合成アセット直下に`src/handlers/`の3 handlerが存在し、開発管理物が存在しないことをテスト。
 - Task17計画を更新。`webhook_handler.py`と署名検証テストを変更対象に追加し、raw body、HMAC-SHA256、constant-time compare、欠落401、不一致403、成功ケースのテストをdeploy前ゲートとして明記。
 - `sleeptech/line` Secret登録例へ`channel_secret`を追加。
-- Task17の完了条件へ署名欠落・不一致テストを追加し、ver1.0 scope外の記述を公開前必須ゲートへ更新。
+- Task17の完了条件へ署名欠落・不一致テストを追加し、Task 16のスコープ外・Task 17の公開前必須ゲートとして記録。
 - 署名検証コード自体はTask16では実装していない。Task17で実装・5.6-solレビューを行う。
 
 ### TDD・検証

@@ -4389,7 +4389,7 @@ git commit -m "feat(infra): CDK スタック（Lambda×3・Scheduler×2・Dynamo
 - Consumes: Task 16 の `SleepTechStack`
 - Produces: 稼働中の本番環境
 
-**このタスクは利用者の手作業に依存する。** 以下の3点が揃うまでデプロイできない。
+**このタスクは利用者の手作業に依存する。** 以下の4点が揃うまでデプロイできない。
 
 1. LINE Developers で SleepTech 用 Messaging API チャネルを作成し、チャネルアクセストークンと userId を取得
 2. LINEチャネルシークレットを取得
@@ -4437,8 +4437,9 @@ Run: `cd infra && npx cdk diff SleepTechStack`
 Expected: 全リソースが新規作成（`+`）であること。既存スタックではないので削除（`-`）は現れない。
 
 ```bash
-cd infra && npx cdk synth SleepTechStack
-cd infra && npx cdk deploy SleepTechStack --require-approval never
+cd infra
+npx cdk synth SleepTechStack
+npx cdk deploy SleepTechStack --require-approval never
 ```
 
 `python -m pytest -q`と署名検証テストが成功した後にのみdeployする。
@@ -4502,7 +4503,7 @@ aws dynamodb get-item --table-name SleepTechTable --key '{"pk":{"S":"FEEDBACK"},
 
 - [ ] **Step 11: deploy.md に手順を残す**
 
-上記 Step 2〜9 の内容を `docs/deploy.md` にまとめる。Function URL、Lambda の物理名、実行したコマンドの実際の値を記録すること。
+上記 Step 2〜10 の内容を `docs/deploy.md` にまとめる。Function URL、Lambda の物理名、実行したコマンドの実際の値を記録すること。
 
 - [ ] **Step 12: コミット**
 
