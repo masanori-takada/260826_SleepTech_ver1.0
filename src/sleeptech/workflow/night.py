@@ -63,7 +63,9 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
     log.log("baseline", days=baseline.days_used, default=baseline.is_default, debt=debt_h)
 
     # 3. 推奨就寝時刻
-    advice = tp.recommend_bedtime(now_h, baseline, debt_h)
+    advice = tp.recommend_bedtime(
+        now_h, baseline, debt_h, target_drop_pct=deps.settings.target_drop_pct
+    )
     log.log("advice", bedtime_h=advice.bedtime_h, drop=advice.mean_drop_pct,
             status=advice.status)
 

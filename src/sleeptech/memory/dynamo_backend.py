@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import time
+from decimal import Decimal
 from typing import Any
 
 import boto3
@@ -31,12 +32,22 @@ class DynamoBackend:
         return self._vital_ttl_days
 
     def _item(self, pk: str, sk: str, value: dict) -> dict[str, Any]:
-        """DynamoDB に渡す native Python 型の項目を作る。"""
+        """DynamoDB に渡す native Python 型の項目を作る。
+
+        ``status`` / ``lease_until`` は claim/complete の ConditionExpression が
+        トップレベル属性として参照するため、``json`` 本体に加えてトップレベルにも
+        同じ値をミラーする。``get()`` は引き続き ``json`` を読むので互換性は保たれる。
+        """
         item: dict[str, Any] = {
             "pk": pk,
             "sk": sk,
             "json": json.dumps(value, ensure_ascii=False, default=str),
         }
+        if "status" in value:
+            item["status"] = value["status"]
+        if "lease_until" in value:
+            # DynamoDB の Table リソースは float を受け付けないため Decimal に変換する
+            item["lease_until"] = Decimal(str(value["lease_until"]))
         if pk == "VITAL":
             item["ttl"] = int(time.time()) + self._vital_ttl_days * 86400
         return item
@@ -57,26 +68,37 @@ class DynamoBackend:
 
     def claim(self, pk: str, sk: str, value: dict, now: float, lease_seconds: int) -> bool:
         item = self._item(pk, sk, {**value, "status": "PENDING", "lease_until": now + lease_seconds})
+        # ConditionExpression の比較値も DynamoDB Table リソースでは Decimal が必要
+        now_decimal = Decimal(str(now))
         try:
             self._table.put_item(
                 Item=item,
-                ConditionExpression=Attr("pk").not_exists() | Attr("lease_until").lt(now),
+                ConditionExpression=Attr("pk").not_exists() | Attr("lease_until").lt(now_decimal),
             )
         except self._table.meta.client.exceptions.ConditionalCheckFailedException:
             return False
         return True
 
     def complete(self, pk: str, sk: str) -> bool:
+        """claim 済み（PENDING）のロックを SENT に遷移させる。
+
+        トップレベル属性だけでなく ``json`` 本体も同時に SENT へ同期する
+        （``get()``/``is_notified`` は ``json`` を読むため）。idem エンティティは
+        pk="IDEM#{slot}", sk=date という形が既知なので、読み直さずに再構成する。
+        """
+        slot = pk.split("#", 1)[1] if pk.startswith("IDEM#") else pk
+        value = {"date": sk, "slot": slot, "status": "SENT"}
+        new_json = json.dumps(value, ensure_ascii=False, default=str)
         try:
             self._table.update_item(
                 Key={"pk": pk, "sk": sk},
-                UpdateExpression="SET #status = :sent REMOVE lease_until",
-                ExpressionAttributeNames={"#status": "status"},
-                ExpressionAttributeValues={":sent": "SENT"},
+                UpdateExpression="SET #status = :sent, #json = :json REMOVE lease_until",
+                ExpressionAttributeNames={"#status": "status", "#json": "json"},
+                ExpressionAttributeValues={":sent": "SENT", ":json": new_json},
                 ConditionExpression=Attr("status").eq("PENDING"),
             )
         except self._table.meta.client.exceptions.ConditionalCheckFailedException:
-            return self.put_conditional(pk, sk, {"status": "SENT"})
+            return self.put_conditional(pk, sk, value)
         return True
 
     def get(self, pk: str, sk: str) -> dict | None:

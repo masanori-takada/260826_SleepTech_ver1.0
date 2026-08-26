@@ -111,13 +111,21 @@ class DailyVital:
         return self.total_sleep_min is not None and self.wake_h is not None
 
     def to_sleep_input(self) -> SleepInput | None:
-        """予測モデルへの入力に変換する。データ不足なら None。"""
+        """予測モデルへの入力に変換する。データ不足なら None。
+
+        C3対応: 予測には「床上時間（TIB, wake_h - bedtime_h）」ではなく
+        「実睡眠時間」を使う。total_sleep_min はAWAKEステージを除いた実睡眠の
+        分数なので、これがあれば bedtime_h = wake_h - total_sleep_min/60.0 で
+        逆算した実睡眠ベースの就寝時刻を優先する。実績の bedtime_h（記録上の
+        入床時刻）は本文表示専用とし、予測には使わない。total_sleep_min が
+        欠損している日だけ、従来どおり実績の bedtime_h（=床上時間）を使う。
+        """
         if not self.has_sleep:
             return None
         bedtime_h = (
-            self.bedtime_h
-            if self.bedtime_h is not None
-            else self.wake_h - self.total_sleep_min / 60.0
+            self.wake_h - self.total_sleep_min / 60.0
+            if self.total_sleep_min is not None
+            else self.bedtime_h
         )
         return SleepInput(
             bedtime_h=bedtime_h,

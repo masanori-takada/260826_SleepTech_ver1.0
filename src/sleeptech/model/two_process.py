@@ -177,6 +177,7 @@ def recommend_bedtime(
     debt_h: float,
     rem_min: float | None = None,
     deep_min: float | None = None,
+    target_drop_pct: float = C.TARGET_DROP_PCT,
 ) -> BedtimeAdvice:
     """閾値を満たす最も遅い就寝時刻を線形スキャンで求める。
 
@@ -187,6 +188,10 @@ def recommend_bedtime(
 
     浮動小数点の累積誤差を避けるため、候補時刻は now_h + i * step_h という
     インデックスからの算出で求める（t += step_h の繰り返しは使わない）。
+
+    target_drop_pct: 「閾値を満たす」の閾値（%）。既定は C.TARGET_DROP_PCT。
+    STC_TARGET_DROP_PCT で上書きしたい呼び出し側（夜フロー）がここに渡す。
+    model/ 配下は純粋関数のみのため、ここでは環境変数を読まない。
     """
     limit_h = baseline.wake_h - C.MIN_SLEEP_BEFORE_WAKE_H
 
@@ -211,7 +216,7 @@ def recommend_bedtime(
 
     # 過小睡眠を勧めないため、平常時睡眠時間を確保できる時刻を上限とする
     comfortable_h = baseline.wake_h - baseline.sleep_h
-    passing = [c for c in candidates if c[1] <= C.TARGET_DROP_PCT]
+    passing = [c for c in candidates if c[1] <= target_drop_pct]
     if passing:
         eligible = [c for c in passing if c[0] <= comfortable_h] or passing
         best = max(eligible, key=lambda c: c[0])

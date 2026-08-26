@@ -68,9 +68,54 @@ def test_night_handler_derives_scheduled_time_in_jst_for_retry(monkeypatch):
 
 def test_night_handler_derives_offset_scheduled_time_in_jst(monkeypatch):
     calls = _patch_night_dependencies(monkeypatch)
+    monkeypatch.setattr(
+        nh.hd,
+        "jst_now",
+        lambda: datetime(2026, 8, 26, 22, 31, tzinfo=JST),
+    )
 
     nh.handler({"scheduled_time": "2026-08-26T15:30:00+02:00"})
 
+    assert calls == [("2026-08-26", 22.5, "deps")]
+
+
+def test_night_handler_falls_back_to_wall_clock_when_scheduled_time_looks_locally_labeled(monkeypatch):
+    """C2: scheduled_time がローカル時刻に誤って Z(UTC) を付けて返ってきたケースを模す。
+
+    AWS ドキュメントは <aws.scheduler.scheduled-time> をUTCのISO文字列と明記しているが、
+    実機でしか最終確認できないため、UTCとして解釈した瞬時が壁時計から9時間ずれる
+    （ローカルJST時刻をUTCと誤解釈した場合の乖離）ケースでは壁時計へフォールバックし、
+    起動直後の壁時計から起点日・now_hを導出する。
+    """
+    calls = _patch_night_dependencies(monkeypatch)
+    monkeypatch.setattr(
+        nh.hd,
+        "jst_now",
+        lambda: datetime(2026, 8, 26, 22, 31, tzinfo=JST),
+    )
+
+    # "22:30:00Z" をUTCとして解釈すると JST では翌日07:30になり、壁時計(22:31同日)から
+    # 約9時間ずれる。ローカル時刻に誤ってZを付けて返してきた場合を模している。
+    result = nh.handler({"scheduled_time": "2026-08-26T22:30:00Z"})
+
+    assert result == {"ok": True}
+    assert calls == [("2026-08-26", 22.5167, "deps")]
+
+
+def test_night_handler_uses_scheduled_time_when_utc_and_wall_clock_roughly_agree(monkeypatch):
+    """scheduled_time がドキュメント通りUTCの場合は、多少のコールドスタート遅延があっても
+    scheduled_time 由来の値をそのまま使う（壁時計にフォールバックしない）。"""
+    calls = _patch_night_dependencies(monkeypatch)
+    monkeypatch.setattr(
+        nh.hd,
+        "jst_now",
+        # 22:30起動から数分遅れて起動したのを模す
+        lambda: datetime(2026, 8, 26, 22, 34, tzinfo=JST),
+    )
+
+    result = nh.handler({"scheduled_time": "2026-08-26T13:30:00Z"})
+
+    assert result == {"ok": True}
     assert calls == [("2026-08-26", 22.5, "deps")]
 
 

@@ -66,6 +66,27 @@ def _deps(memory=None, llm=None, push=None):
     )
 
 
+def test_target_drop_pct_setting_is_passed_to_recommend_bedtime(monkeypatch):
+    """I6: Settings.target_drop_pct（STC_TARGET_DROP_PCT）が recommend_bedtime に
+    実際に渡ることを確認する（以前は誰も参照せず C.TARGET_DROP_PCT 直参照だった）。"""
+    captured = {}
+    original = night.tp.recommend_bedtime
+
+    def spy(*args, **kwargs):
+        captured["target_drop_pct"] = kwargs.get("target_drop_pct")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(night.tp, "recommend_bedtime", spy)
+
+    settings = replace(load_settings(), target_drop_pct=3.5)
+    deps = night.NightDeps(
+        settings=settings, memory=_memory(), llm_client=StubLlm(), push_client=FakePushClient()
+    )
+    night.run_night(DATE, NOW_H, deps)
+
+    assert captured["target_drop_pct"] == 3.5
+
+
 def test_sends_one_message_with_quick_reply():
     push = FakePushClient()
     night.run_night(DATE, NOW_H, _deps(push=push))

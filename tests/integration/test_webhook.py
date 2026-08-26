@@ -138,20 +138,15 @@ def test_feedback_does_not_bind_when_prediction_only_two_days_ago():
 # 「前日にのみ夜予測がある場合に前日を返す」ケースは
 # test_feedback_falls_back_to_previous_day で既にカバーされているため重複させない。
 
-
-def test_texts_returns_empty_list_when_body_is_json_array():
-    """body が JSON 配列（\"[]\"）でも例外にならず空リストを返す。"""
-    event = {"body": "[]"}
-    assert wh._texts(event) == []
-
-
-def test_texts_returns_empty_list_when_events_is_not_a_list():
-    """events がリストでなくても例外にならず空リストを返す。"""
-    event = {"body": '{"events": "not a list"}'}
-    assert wh._texts(event) == []
-
-
-def test_texts_returns_empty_list_when_event_items_are_not_dicts():
-    """events の要素が dict でなくても例外にならず空リストを返す。"""
-    event = {"body": '{"events": [1, 2]}'}
-    assert wh._texts(event) == []
+# NOTE(出荷前レビュー Minor 対応): 以前ここにあった3件のテスト
+# （test_texts_returns_empty_list_when_body_is_json_array 等）は
+# wh._texts({"body": "..."}) を呼んでいたが、_texts はパース済み payload
+# （{"events": [...]}）を受け取る関数であり、キー "body" は参照しない。
+# そのため入力は常に events キーを持たず、実質的に何を渡しても [] が
+# 返るだけの無効なテストだった（JSON配列・非リストevents・非dict要素への
+# 防御を検証したつもりで、実際には何も検証していなかった）。
+# _texts 自体は _authorized_texts に置き換え済みでプロダクションコードから
+# 呼ばれていないデッドコードであり（tests/unit/test_handlers.py の
+# test_texts_returns_only_string_texts_from_valid_events が正しい入力形式で
+# 契約を検証済み）、この3件は書き直さずテストごと削除した
+# （_texts 自体の削除は別の出荷前レビュー指摘のデッドコード整理タスクの範囲）。

@@ -48,7 +48,10 @@ class InMemoryBackend:
 
     def complete(self, pk: str, sk: str) -> bool:
         item = self._items.get((pk, sk))
-        if not item or item.get("status") == "SENT":
+        if not item:
+            # DynamoBackend.complete() と同様、未 claim の場合は新規 SENT 作成にフォールバックする
+            return self.put_conditional(pk, sk, {"status": "SENT"})
+        if item.get("status") == "SENT":
             return False
         item = {**item, "status": "SENT"}
         item.pop("lease_until", None)
@@ -124,16 +127,16 @@ class MemoryClient:
         )
 
     def mark_notified(self, date: str, slot: str) -> bool:
+        """バックエンドが提供するインタフェースで分岐する（クラス名文字列には依存しない）。"""
         complete = getattr(self._backend, "complete", None)
-        if callable(complete) and self._backend.__class__.__name__ == "DynamoBackend":
+        if callable(complete):
             return complete(_pk_idem(slot), date)
+        # complete() を持たない最小バックエンド向けのフォールバック
         item = self._backend.get(_pk_idem(slot), date)
         if not item:
             return self._backend.put_conditional(
                 _pk_idem(slot), date, {"date": date, "slot": slot, "status": "SENT"}
             )
-        if callable(complete):
-            return complete(_pk_idem(slot), date)
         if item.get("status") == "SENT":
             return False
         item = {**item, "status": "SENT"}

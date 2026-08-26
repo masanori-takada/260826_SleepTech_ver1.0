@@ -75,6 +75,19 @@ def test_scan_is_deterministic():
     assert a == b
 
 
+def test_target_drop_pct_parameter_overrides_the_default_threshold():
+    """I6: target_drop_pct を明示的に渡すと、C.TARGET_DROP_PCT ではなくその値が
+    「閾値を満たす」の判定に使われる（STC_TARGET_DROP_PCT を反映する経路）。"""
+    default_threshold = tp.recommend_bedtime(now_h=24.5, baseline=BASE, debt_h=30.0)
+    assert default_threshold.status == "unreachable"
+
+    lenient_threshold = tp.recommend_bedtime(
+        now_h=24.5, baseline=BASE, debt_h=30.0, target_drop_pct=100.0
+    )
+    assert lenient_threshold.status == "ok"
+    assert lenient_threshold.mean_drop_pct <= 100.0
+
+
 def test_unreachable_mean_drop_is_published_conservatively():
     """閾値直上の未丸め平均は、公開値を切り上げて status と整合させる。"""
     got = tp.recommend_bedtime(now_h=24.9, baseline=BASE, debt_h=0.15)

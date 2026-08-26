@@ -57,12 +57,19 @@ def test_afternoon_dip_is_worse_than_morning():
 
 
 @pytest.mark.parametrize(
-    "hours,lo,hi",
-    [(5.0, 12, 35), (6.0, 5, 20)],
+    # 仕様 第5節の期待出力表（C3/I8 対応で実測値に更新済み）の周辺に狭めたレンジ。
+    # 実測: 5h -> 10時20%/14時22%、6h -> 10時10%/14時12%。
+    "hours,hour,lo,hi",
+    [
+        (5.0, 10, 17, 23),
+        (5.0, 14, 19, 25),
+        (6.0, 10, 7, 13),
+        (6.0, 14, 9, 15),
+    ],
 )
-def test_drop_is_within_plausible_range(hours, lo, hi):
-    """14時の低下率が常識的なレンジに収まる（仕様 第5節の期待出力表）。"""
-    got = _at(tp.predict_curve(_sleep(hours), BASE, 0.0), 14)
+def test_drop_is_within_plausible_range(hours, hour, lo, hi):
+    """10時・14時の低下率が仕様 第5節の期待出力表の実測値近辺に収まる。"""
+    got = _at(tp.predict_curve(_sleep(hours), BASE, 0.0), hour)
     assert lo <= got <= hi
 
 
