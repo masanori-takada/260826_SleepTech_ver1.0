@@ -15,6 +15,31 @@ def _client() -> MemoryClient:
     return MemoryClient(InMemoryBackend())
 
 
+class _ThreeArgBackend:
+    """Brief の put(pk, sk, value) 注入契約だけを実装する最小fake。"""
+
+    def __init__(self) -> None:
+        self.items = {}
+
+    def put(self, pk, sk, value):
+        self.items[(pk, sk)] = value
+
+    def get(self, pk, sk):
+        return self.items.get((pk, sk))
+
+    def query_range(self, pk, start_sk, end_sk):
+        return []
+
+
+def test_save_vital_accepts_three_argument_backend_put_contract():
+    backend = _ThreeArgBackend()
+    vital = DailyVital(date="2026-08-26", total_sleep_min=330)
+
+    MemoryClient(backend).save_vital(vital)
+
+    assert backend.items[("VITAL", "2026-08-26")] == vital.to_dict()
+
+
 def test_save_and_get_vital():
     c = _client()
     v = DailyVital(date="2026-08-26", total_sleep_min=330, wake_h=31.0)
@@ -131,14 +156,17 @@ def test_dynamo_put_wraps_values_without_implicit_ttl():
     resource = Mock()
     resource.Table.return_value = table
     with patch("boto3.resource", return_value=resource), patch("time.time", return_value=1000):
-        backend = DynamoBackend("table", "ap-northeast-1", ttl_days=2)
+        backend = DynamoBackend("table", "ap-northeast-1", vital_ttl_days=2)
         backend.put("VITAL", "2026-08-26", {"wake_h": 31.0})
+        backend.put("FEEDBACK", "2026-08-26", {"score": 4})
 
-    item = table.put_item.call_args.kwargs["Item"]
-    assert item["pk"] == "VITAL"
-    assert item["sk"] == "2026-08-26"
-    assert item["json"] == '{"wake_h": 31.0}'
-    assert "ttl" not in item
+    vital_item = table.put_item.call_args_list[0].kwargs["Item"]
+    feedback_item = table.put_item.call_args_list[1].kwargs["Item"]
+    assert vital_item["pk"] == "VITAL"
+    assert vital_item["sk"] == "2026-08-26"
+    assert vital_item["json"] == '{"wake_h": 31.0}'
+    assert vital_item["ttl"] == 1000 + 2 * 86400
+    assert "ttl" not in feedback_item
 
 
 def test_dynamo_conditional_put_returns_true_or_false_for_typed_failure():
@@ -179,7 +207,7 @@ def test_memory_client_vital_only_receives_365_day_ttl():
     resource = Mock()
     resource.Table.return_value = table
     with patch("boto3.resource", return_value=resource), patch("time.time", return_value=1000):
-        backend = DynamoBackend("table", "ap-northeast-1", ttl_days=365)
+        backend = DynamoBackend("table", "ap-northeast-1", vital_ttl_days=365)
         client = MemoryClient(backend)
         client.save_vital(DailyVital(date="2026-08-26", total_sleep_min=330))
         client.save_prediction(Prediction(date="2026-08-26", slot="NIGHT"))

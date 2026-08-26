@@ -7,8 +7,6 @@ from datetime import timedelta
 
 from sleeptech.memory.schemas import DailyVital, Feedback, Prediction
 
-VITAL_TTL_DAYS = 365
-
 PK_VITAL = "VITAL"
 PK_FEEDBACK = "FEEDBACK"
 PK_CONFIG = "CONFIG"
@@ -29,17 +27,10 @@ class InMemoryBackend:
     def __init__(self) -> None:
         self._items: dict[tuple[str, str], dict] = {}
 
-    @property
-    def vital_ttl_days(self) -> int:
-        """DynamoDB 実装と同じ Vital 保持日数を返す。"""
-        return VITAL_TTL_DAYS
-
-    def put(self, pk: str, sk: str, value: dict, ttl_days: int | None = None) -> None:
+    def put(self, pk: str, sk: str, value: dict) -> None:
         self._items[(pk, sk)] = value
 
-    def put_conditional(
-        self, pk: str, sk: str, value: dict, ttl_days: int | None = None
-    ) -> bool:
+    def put_conditional(self, pk: str, sk: str, value: dict) -> bool:
         if (pk, sk) in self._items:
             return False
         self._items[(pk, sk)] = value
@@ -68,10 +59,9 @@ class MemoryClient:
 
     def __init__(self, backend) -> None:
         self._backend = backend
-        self._vital_ttl_days = getattr(backend, "vital_ttl_days", VITAL_TTL_DAYS)
 
     def save_vital(self, vital: DailyVital) -> None:
-        self._backend.put(PK_VITAL, vital.date, vital.to_dict(), ttl_days=self._vital_ttl_days)
+        self._backend.put(PK_VITAL, vital.date, vital.to_dict())
 
     def get_vital(self, date: str) -> DailyVital | None:
         raw = self._backend.get(PK_VITAL, date)

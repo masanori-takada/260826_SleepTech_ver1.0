@@ -19,36 +19,36 @@ DEFAULT_VITAL_TTL_DAYS = 365
 class DynamoBackend:
     """DynamoDB resource の Table を再利用する汎用バックエンド。"""
 
-    def __init__(self, table_name: str, region: str, ttl_days: int | None = None) -> None:
+    def __init__(
+        self, table_name: str, region: str, vital_ttl_days: int = DEFAULT_VITAL_TTL_DAYS
+    ) -> None:
         self._table = boto3.resource("dynamodb", region_name=region).Table(table_name)
-        self._vital_ttl_days = ttl_days if ttl_days is not None else DEFAULT_VITAL_TTL_DAYS
+        self._vital_ttl_days = vital_ttl_days
 
     @property
     def vital_ttl_days(self) -> int:
         """Vital に適用する保持日数。ほかのエンティティには適用しない。"""
         return self._vital_ttl_days
 
-    def _item(self, pk: str, sk: str, value: dict, ttl_days: int | None) -> dict[str, Any]:
+    def _item(self, pk: str, sk: str, value: dict) -> dict[str, Any]:
         """DynamoDB に渡す native Python 型の項目を作る。"""
         item: dict[str, Any] = {
             "pk": pk,
             "sk": sk,
             "json": json.dumps(value, ensure_ascii=False, default=str),
         }
-        if ttl_days is not None:
-            item["ttl"] = int(time.time()) + ttl_days * 86400
+        if pk == "VITAL":
+            item["ttl"] = int(time.time()) + self._vital_ttl_days * 86400
         return item
 
-    def put(self, pk: str, sk: str, value: dict, ttl_days: int | None = None) -> None:
-        """値を保存する。TTL は呼び出し側が明示した場合だけ付与する。"""
-        item = self._item(pk, sk, value, ttl_days)
+    def put(self, pk: str, sk: str, value: dict) -> None:
+        """値を保存する。TTL は Vital エンティティにだけ付与する。"""
+        item = self._item(pk, sk, value)
         self._table.put_item(Item=item)
 
-    def put_conditional(
-        self, pk: str, sk: str, value: dict, ttl_days: int | None = None
-    ) -> bool:
+    def put_conditional(self, pk: str, sk: str, value: dict) -> bool:
         """未登録キーだけを原子的に保存し、条件不成立なら False を返す。"""
-        item = self._item(pk, sk, value, ttl_days)
+        item = self._item(pk, sk, value)
         try:
             self._table.put_item(Item=item, ConditionExpression=Attr("pk").not_exists())
         except self._table.meta.client.exceptions.ConditionalCheckFailedException:
