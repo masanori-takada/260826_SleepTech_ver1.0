@@ -74,3 +74,36 @@
 - 最終ブランチレビュー2回目 完了: Critical 3 / Important 8 / Minor 多数。
   指摘一覧は final-review-findings.md に保存。C1・C3 は controller が実機検証で確認済み。
   判定: Critical 3件を直し I3 を実機確認してからデプロイ。
+
+## 出荷前修正（最終レビュー2回目の指摘対応）
+
+- 第1波 47add96: C1 / C2 / C3 / I6 / I8 + Minor2件
+  - C1: status / lease_until をトップレベル属性にミラー。moto による実条件評価テストを追加
+  - C2: scheduled_time の解釈に防御を追加（当初は壁時計との乖離7時間超でフォールバック）
+  - C3: to_sleep_input が total_sleep_min を優先。baseline.sleep_h も同定義に統一
+    断片化睡眠（実睡眠6h・床上8h）が -0% → 10時-10%/14時-12% に是正
+  - I6: recommend_bedtime に閾値を引数化し STC_TARGET_DROP_PCT を有効化
+  - I8: 仕様 第5節の期待出力表を実測値に更新（元の「約-7%」は未検証の手計算だった）
+- 第2波 d2b383b: I1 / I2 / I3 / I4 / I5 / I7 + Minor3件
+  - I3: Retry-Key を決定論的 UUID v4 形状に（LINE 仕様は v4。検証されると全 push が 400 だった）
+  - I1: HTTP timeout 20→4秒、collectors に deadline 伝播。最悪 140秒超 → 28秒
+  - I5: MSG#NIGHT / MSG#MORNING の保存を実装（仕様 第9節）
+- 第3波 28492e7: 最終確認レビューの New-1 / New-2 + M1〜M6
+  - **New-1（第1波が入れた退行）**: 閾値7時間は長時間リトライも誤検出し、正しい scheduled_time を
+    捨てて壁時計に落ちていた。朝6時に夜メッセージを送り、IDEM を先食いして本来の夜メッセージが
+    無言消滅する経路。→ 判定を「壁時計との乖離量」から「scheduled_time 自体の形」へ変更
+    （naive 値を JST と読んで cron 予定時刻に一致するかで判定）。壁時計に一切依存しなくなった
+  - New-2: MorningSchedule にも scheduled_time を渡し、両 Scheduler に RetryPolicy を明示
+    （maximum_event_age=3600s / max_attempts=5）。日跨ぎリトライ自体を起こさせない
+  - M1〜M6: too_late/unreachable の -0%、Message.delivered/regen_count、status ミラーの漏れ、
+    boto3 タイムアウト、未使用 Settings 削除、CDK env=
+
+- 判断して手を付けなかったもの:
+  - New-5: allowed_times にカーブ時刻を足したことによる捏造検出力の低下は許容。
+    必須の4時刻は依然として全て本文に必要で、カーブ時刻は自前データ由来のため
+  - New-11: I8 の仕様表更新は「実装に合わせた」のではなく「未検証の手計算を実測に置換した」もの
+  - デッドコード削除（query_desc / to_h / _texts）: 出荷直前の churn を避けて見送り
+
+- **最終状態: 387 tests passing / cdk synth 成功 / Critical 0**
+- 残りは外部作業のみ（AWS デプロイ、Secrets 登録、LINE チャネル作成と Webhook 設定、
+  実機確認、既存 NightRamen Scheduler の停止）。利用者の認証情報と明示的な承認が必要
