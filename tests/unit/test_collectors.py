@@ -212,6 +212,98 @@ def test_missing_interval_yields_all_none():
     assert got["wake_h"] is None
 
 
+class _FakeDeadline:
+    """ExecutionDeadline 互換の偽期限。can_start() の戻り値を固定できる。"""
+
+    def __init__(self, allow: bool) -> None:
+        self._allow = allow
+
+    def can_start(self, expected_sec: float = 0.0) -> bool:
+        return self._allow
+
+
+def test_fetch_raw_skips_all_requests_when_deadline_already_exhausted():
+    """I1: 残り時間が無ければ1本もHTTPを叩かず、全フィールドを欠損(None)で返す。
+
+    MorningFnのタイムアウト(60秒)に対し外部HTTPの最悪待ちが140秒超だった問題への
+    対策。deadline切れ後はリクエストを打ち切り、取得済みデータだけで集計するか、
+    無ければ欠損として安全に扱う既存フォールバックに乗せる。
+    """
+    calls = {"post": 0, "get": 0}
+
+    def post(url, headers, body):
+        calls["post"] += 1
+        return {"rollupDataPoints": []}
+
+    def get(url, headers):
+        calls["get"] += 1
+        return {"dataPoints": []}
+
+    source = GoogleHealthApiSource(
+        lambda: "token", http_post=post, http_get=get, deadline=_FakeDeadline(False)
+    )
+    raw = source.fetch_raw("2026-08-27")
+
+    assert calls == {"post": 0, "get": 0}
+    assert raw["night_avg_hr"] is None
+    assert raw["hrv"] is None
+    assert raw["total_sleep_min"] is None
+    assert raw["wake_h"] is None
+
+
+def test_fetch_raw_proceeds_normally_when_deadline_has_time_left():
+    """deadline があっても余裕があれば従来どおり全フィールドを取得しにいく。"""
+    calls = {"post": 0, "get": 0}
+
+    def post(url, headers, body):
+        calls["post"] += 1
+        return {"rollupDataPoints": []}
+
+    def get(url, headers):
+        calls["get"] += 1
+        return {"dataPoints": []}
+
+    source = GoogleHealthApiSource(
+        lambda: "token", http_post=post, http_get=get, deadline=_FakeDeadline(True)
+    )
+    source.fetch_raw("2026-08-27")
+
+    assert calls["post"] > 0
+    assert calls["get"] > 0
+
+
+def test_fetch_raw_without_deadline_is_unaffected_backward_compat():
+    """deadline=None（既定）は従来どおり無制限（後方互換）。"""
+    calls = {"post": 0}
+
+    def post(url, headers, body):
+        calls["post"] += 1
+        return {"rollupDataPoints": []}
+
+    source = GoogleHealthApiSource(lambda: "token", http_post=post, http_get=lambda u, h: {"dataPoints": []})
+    source.fetch_raw("2026-08-27")
+
+    assert calls["post"] == len(
+        __import__("sleeptech.collectors.google_health_api", fromlist=["_ROLLUP_MAP"])._ROLLUP_MAP
+    )
+
+
+def test_default_http_timeout_is_short_enough_for_morning_fn_deadline():
+    """I1: HTTPタイムアウトが旧20秒から短縮されている（MorningFnの60秒制限対策）。"""
+    from sleeptech.collectors import google_health_api as gha
+
+    assert gha.HTTP_TIMEOUT_SEC <= 5.0
+
+
+def test_rollup_map_no_longer_fetches_unused_next_day_fields():
+    """Minor: next_day_steps / next_day_calories は DailyVital に対応フィールドが
+    無く常に捨てられていたため削除した（無駄なAPI呼び出しの削減）。"""
+    from sleeptech.collectors import google_health_api as gha
+
+    assert "next_day_steps" not in gha._ROLLUP_MAP
+    assert "next_day_calories" not in gha._ROLLUP_MAP
+
+
 def test_to_daily_vital_shifts_date_back_by_one_day():
     """Google Health は起床日で睡眠を返す。本プロジェクトの date は起点日なので1日引く。"""
     raw = {"total_sleep_min": 440, "wake_h": 31.0, "bedtime_h": 23.5}

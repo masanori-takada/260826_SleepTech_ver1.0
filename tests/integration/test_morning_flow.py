@@ -192,6 +192,88 @@ def test_llm_success_path_still_passes_after_percents_change():
     assert len(push.sent) == 1
 
 
+class ParaphrasingLlm:
+    """自然な言い換え（「13時から15時にかけて」形式）で時刻を書く偽 LLM。
+
+    I7: allowed_times にカーブの時刻が入っていないと、この言い換えが
+    「捏造」として弾かれ、LLM 経路が不必要に不安定になっていた。
+    必須の谷（-16%、既定の FakeHealthSource では起床+7h=14時）は数値として
+    別途本文に含める（percents の必須チェックとは独立に times だけを検証したいため）。
+    """
+
+    def __init__(self, hour_a: int, hour_b: int, required_pct: int) -> None:
+        self.hour_a = hour_a
+        self.hour_b = hour_b
+        self.required_pct = required_pct
+
+    def complete(self, system: str, user: str) -> str:
+        # 必須値（カフェイン推奨・最終摂取・朝光・避光の各時刻）はそのまま含めつつ、
+        # 谷の時間帯だけ「〜時から〜時にかけて」という自然な言い換えにする。
+        return (
+            f"{self.hour_a}時から{self.hour_b}時にかけて集中力が-{self.required_pct}%ほど"
+            "落ちやすい見込みです。カフェインは8:00に、13:30までに済ませてください。"
+            "朝の光は7:30までに、20:30以降は避光を。"
+            "あなたの平常時を100%とした推定の目安です。"
+        )
+
+
+def test_curve_hour_paraphrase_is_not_rejected_as_fabrication():
+    """I7: カーブの時刻を「〜時から〜時にかけて」と言い換えても弾かれない。
+
+    既定の FakeHealthSource（wake_h=31.0 → 起床7時、主要時間帯の谷は14時=-16%）
+    のカーブは起床時刻から CURVE_HOURS 時間分連番になるため、13時・15時は
+    カーブの範囲内（allowed_times にカーブ由来の時刻を加えていないと弾かれる）。
+    """
+    memory = _memory()
+    push = FakePushClient()
+    llm = ParaphrasingLlm(13, 15, required_pct=16)
+    got = morning.run_morning(DATE, _deps(memory=memory, llm=llm, push=push))
+    assert got["used_fallback"] is False
+
+
+# --- I5: MSG#MORNING の保存 ---
+
+
+def test_saves_message_with_body_and_guardrail_result():
+    """I5: 送信後に本文・ガードレール結果・再生成回数・送信可否を保存する。"""
+    memory = _memory()
+    push = FakePushClient()
+    morning.run_morning(DATE, _deps(memory=memory, push=push))
+    msg = memory.get_message(DATE, "MORNING")
+    assert msg is not None
+    assert msg.body == push.sent[0]["text"]  # 朝はフィードバック質問を付けないため本文と一致
+    assert msg.delivered is True
+
+
+def test_saves_message_marks_fallback_when_llm_fails():
+    memory = _memory()
+    push = FakePushClient()
+    morning.run_morning(DATE, _deps(memory=memory, llm=NullClient(), push=push))
+    msg = memory.get_message(DATE, "MORNING")
+    assert msg.guardrail_passed is False
+
+
+def test_saves_message_for_no_sleep_data_branch():
+    """睡眠データ欠損時のテンプレート送信も MSG として記録する。"""
+    memory = _memory()
+    push = FakePushClient()
+    source = FakeHealthSource(raw={})
+    morning.run_morning(DATE, _deps(memory=memory, source=source, push=push))
+    msg = memory.get_message(DATE, "MORNING")
+    assert msg is not None
+    assert msg.guardrail_passed is False
+
+
+def test_saves_message_for_consent_revoked_branch():
+    memory = _memory()
+    push = FakePushClient()
+    source = FakeHealthSource(error=ConsentRevokedError("token expired"))
+    morning.run_morning(DATE, _deps(memory=memory, source=source, push=push))
+    msg = memory.get_message(DATE, "MORNING")
+    assert msg is not None
+    assert msg.guardrail_passed is False
+
+
 def test_afternoon_shows_a_local_dip_after_short_sleep():
     """5時間台の睡眠でも、午後（post-lunch dip）に局所的な谷が現れる。
 

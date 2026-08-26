@@ -9,8 +9,6 @@ WebhookFn（「おはよう」検出）の両方から呼ばれるため、こ�
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-import uuid
-import inspect
 from datetime import date as date_cls
 from datetime import timedelta
 
@@ -26,19 +24,11 @@ from sleeptech.model import recovery as rc
 from sleeptech.model import two_process as tp
 from sleeptech.notifier.line import build_message
 from sleeptech.observability import StructuredLogger
+from sleeptech.workflow._common import push as _push
+from sleeptech.workflow._common import retry_key as _retry_key
+from sleeptech.workflow._common import save_message as _save_message
 
 SLOT = "MORNING"
-
-
-def _retry_key(date: str, slot: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"sleeptech:{date}:{slot}"))
-
-
-def _push(deps, message: dict, retry_key: str) -> None:
-    if "retry_key" in inspect.signature(deps.push_client.push).parameters:
-        deps.push_client.push(message, retry_key=retry_key)
-    else:
-        deps.push_client.push(message)
 
 _NO_DATA_TEXT = (
     "おはようございます。今朝は睡眠データを取得できませんでした。\n"
@@ -78,6 +68,10 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
         log.log("consent_revoked", error=str(exc))
         _push(deps, build_message(_CONSENT_TEXT, with_feedback=False), _retry_key(date, SLOT))
         _mark_notified(deps, date, log)
+        _save_message(
+            deps, date, SLOT, _CONSENT_TEXT,
+            guardrail_passed=False, regen_count=0, delivered=True, log=log,
+        )
         return {
             "delivered": True,
             "skipped": False,
@@ -94,6 +88,10 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
     if not vital.has_sleep:
         _push(deps, build_message(_NO_DATA_TEXT, with_feedback=False), _retry_key(date, SLOT))
         _mark_notified(deps, date, log)
+        _save_message(
+            deps, date, SLOT, _NO_DATA_TEXT,
+            guardrail_passed=False, regen_count=0, delivered=True, log=log,
+        )
         return {
             "delivered": True,
             "skipped": False,
@@ -124,13 +122,19 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
     times = list(plan.caffeine_times_h) + [
         plan.caffeine_cutoff_h, plan.light_morning_h, plan.light_avoid_after_h
     ]
+    # I7対応: 許可リストにカーブの各時刻も加える。必須の times には含めない
+    # （含めると全時刻を書かないと通らなくなり、LLMの言い換え余地が消える）。
+    # allowed_times に加えないと「14時から16時にかけて」のような自然な言い換えで
+    # normalize() が 14:00 / 16:00 を抽出し、許可外＝捏造として弾かれてしまう
+    # （「14時台」表記だけは除外規則で通るため、自然な言い換えほど不安定だった）。
+    allowed_times = times + [float(d.hour) for d in curve]
     facts = gv.Facts(
         times=times,
         percents=[worst.focus_pct] if worst.focus_pct > 0 else [],
-        allowed_times=times,
+        allowed_times=allowed_times,
         allowed_percents=all_pcts,
     )
-    body, used_fallback = _compose(deps, curve, plan, vital, facts, log)
+    body, used_fallback, regen_count = _compose(deps, curve, plan, vital, facts, log)
 
     # push の例外はここで捕捉せず伝播させる。送信していないのに mark_notified して
     # しまう事故（Lambda 再試行時の二重送信）を防ぐため（夜フローと同じ方針）。
@@ -155,6 +159,15 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
     except Exception as exc:  # noqa: BLE001 — push 成功後の失敗は伝播させない
         log.log("save_prediction_failed", error=str(exc))
 
+    # I5対応: 仕様 第9節 MSG#MORNING。本文・ガードレール結果・再生成回数・送信可否を記録する。
+    _save_message(
+        deps, date, SLOT, body,
+        guardrail_passed=not used_fallback,
+        regen_count=regen_count,
+        delivered=True,
+        log=log,
+    )
+
     return {
         "delivered": True,
         "skipped": False,
@@ -177,8 +190,12 @@ def _mark_notified(deps: MorningDeps, date: str, log: StructuredLogger) -> None:
         log.log("mark_notified_failed", error=str(exc))
 
 
-def _compose(deps, curve, plan, vital, facts, log) -> tuple[str, bool]:
-    """LLM で文章化し検証する。通らなければテンプレート文を返す。"""
+def _compose(deps, curve, plan, vital, facts, log) -> tuple[str, bool, int]:
+    """LLM で文章化し検証する。通らなければテンプレート文を返す。
+
+    戻り値の3つめは regen_count（ガードレール不通過による再試行回数。
+    最初の1回は含まない）。
+    """
     user = prompts.morning_user(curve, plan, vital)
     for attempt in range(deps.max_regen + 1):
         if deps.deadline is not None and not deps.deadline.can_start():
@@ -190,6 +207,6 @@ def _compose(deps, curve, plan, vital, facts, log) -> tuple[str, bool]:
             break
         result = gv.validate(text, facts)
         if result.passed:
-            return text, False
+            return text, False, attempt
         log.log("guardrail_rejected", attempt=attempt, reason=result.reason)
-    return fallback.morning_text(curve, plan, vital), True
+    return fallback.morning_text(curve, plan, vital), True, deps.max_regen

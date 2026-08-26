@@ -232,3 +232,106 @@ def test_push_failure_still_propagates_and_leaves_not_notified():
     with pytest.raises(RuntimeError):
         night.run_night(DATE, NOW_H, _deps(memory=memory, push=_PushFailsClient()))
     assert memory.is_notified(DATE, "NIGHT") is False
+
+
+# --- I4: 低下率0%の晩の扱い ---
+# _memory() の既定履歴（毎晩7.5h睡眠）は baseline.sleep_h と一致するため、
+# NOW_H=22.5 で推奨就寝時刻に間に合う夜は drop=0% になる（実際に上のテストの
+# "advice" ログでも drop=0 を確認済み）。
+
+
+def test_zero_drop_night_does_not_require_percent_in_facts(monkeypatch):
+    """I4: 低下率0%のときは Facts.percents が空になる（0%の明記を必須にしない）。"""
+    memory = _memory()
+    captured = {}
+    original = night.gv.validate
+
+    def spy(text, facts):
+        captured["facts"] = facts
+        return original(text, facts)
+
+    monkeypatch.setattr(night.gv, "validate", spy)
+
+    push = FakePushClient()
+    result = night.run_night(DATE, NOW_H, _deps(memory=memory, push=push))
+
+    assert result["mean_drop_pct"] == 0
+    assert captured["facts"].percents == []
+
+
+def test_zero_drop_night_fallback_avoids_minus_zero_percent():
+    """I4: LLM を落として0%の晩のテンプレート文を確認する。'-0%' という
+    不自然な表記を含まず、専用の前向きな文面になっていること。
+    """
+    push = FakePushClient()
+    result = night.run_night(DATE, NOW_H, _deps(llm=NullClient(), push=push))
+    assert result["mean_drop_pct"] == 0
+    assert result["used_fallback"] is True
+    text = push.sent[0]["text"]
+    assert "-0%" not in text
+    assert "ベストに近い一日になりそうです" in text
+
+
+def test_zero_drop_night_llm_success_path_still_passes():
+    """I4対応後も LLM 成功経路（used_fallback=False）が0%の晩で通ること。"""
+    push = FakePushClient()
+    memory = _memory()
+    result = night.run_night(DATE, NOW_H, _deps(memory=memory, llm=StubLlm(), push=push))
+    assert result["mean_drop_pct"] == 0
+    assert result["used_fallback"] is False
+
+
+def test_normal_night_llm_success_path_still_passes_with_nonzero_drop():
+    """通常晩（履歴不足で0%ではない）でも LLM 成功経路が引き続き通ること。"""
+    push = FakePushClient()
+    empty = MemoryClient(InMemoryBackend())  # 履歴ゼロ→既定ベースライン、drop>0 になりやすい
+    result = night.run_night(DATE, NOW_H, _deps(memory=empty, llm=StubLlm(), push=push))
+    assert result["used_fallback"] is False
+
+
+# --- I5: MSG#NIGHT の保存 ---
+
+
+def test_saves_message_with_body_and_guardrail_result():
+    """I5: 送信後に本文・ガードレール結果・再生成回数・送信可否を保存する。"""
+    memory = _memory()
+    push = FakePushClient()
+    night.run_night(DATE, NOW_H, _deps(memory=memory, push=push))
+    msg = memory.get_message(DATE, "NIGHT")
+    assert msg is not None
+    # push.sent[0]["text"] は build_message がクイックリプライ質問文を
+    # 末尾に足した後の文字列なので、保存された body（LLM/テンプレートの
+    # 素の本文）はその先頭部分として含まれる。
+    assert push.sent[0]["text"].startswith(msg.body)
+    assert msg.delivered is True
+
+
+def test_saves_message_marks_fallback_when_guardrail_rejected():
+    memory = _memory()
+    push = FakePushClient()
+    bad = StubLlm(template="必ず-99%落ちます。手遅れです。")
+    night.run_night(DATE, NOW_H, _deps(memory=memory, llm=bad, push=push))
+    msg = memory.get_message(DATE, "NIGHT")
+    assert msg.guardrail_passed is False
+
+
+class _SaveMessageFailsMemory(MemoryClient):
+    """save_message 呼び出し時に必ず例外を投げる記憶クライアント。"""
+
+    def save_message(self, msg) -> None:
+        raise RuntimeError("save_message boom")
+
+
+def test_save_message_failure_does_not_break_delivery():
+    """push 成功後に save_message が失敗しても例外は伝播せず delivered=True のまま。"""
+    memory = _SaveMessageFailsMemory(InMemoryBackend())
+    from datetime import date as d, timedelta
+
+    for i in range(1, 15):
+        day = (d.fromisoformat(DATE) - timedelta(days=i)).isoformat()
+        memory.save_vital(DailyVital(date=day, total_sleep_min=450, bedtime_h=23.5,
+                                      wake_h=31.0, rem_sleep_min=90, deep_sleep_min=60))
+    push = FakePushClient()
+    result = night.run_night(DATE, NOW_H, _deps(memory=memory, push=push))
+    assert len(push.sent) == 1
+    assert result["delivered"] is True

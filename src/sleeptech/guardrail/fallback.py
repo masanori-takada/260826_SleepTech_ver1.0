@@ -23,6 +23,10 @@ def night_text(advice, baseline, debt_h: float) -> str:
     elif advice.status == "unreachable":
         lines.append(f"今夜は何時に寝てもベスト比 -{advice.mean_drop_pct}% 程度の見込みです。")
         lines.append(f"できるだけ早めに、遅くとも{time_s}には横になってください。")
+    elif advice.mean_drop_pct == 0:
+        # I4対応: 平常どおり眠れる晩は「-0%」という不自然な表記を避け、専用の文面にする。
+        lines.append(f"▶ 今夜は {time_s} までに就寝")
+        lines.append("今夜の目安どおりに寝られれば、明日はベストに近い一日になりそうです。")
     else:
         lines.append(f"▶ 今夜は {time_s} までに就寝")
         lines.append(f"守れれば明日は一日ベスト比 -{advice.mean_drop_pct}% 以内の見込みです。")

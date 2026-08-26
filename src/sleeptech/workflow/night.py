@@ -8,31 +8,21 @@ LLM が落ちてもテンプレート文で数値は届く。
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-import uuid
-import inspect
 
 from sleeptech.guardrail import fallback
 from sleeptech.guardrail import validator as gv
 from sleeptech.llm import prompts
-from sleeptech.memory.schemas import Prediction
+from sleeptech.memory.schemas import Message, Prediction
 from sleeptech.model import baseline as bl
 from sleeptech.model import constants as C
 from sleeptech.model import two_process as tp
 from sleeptech.notifier.line import build_message
 from sleeptech.observability import StructuredLogger
+from sleeptech.workflow._common import push as _push
+from sleeptech.workflow._common import retry_key as _retry_key
+from sleeptech.workflow._common import save_message as _save_message
 
 SLOT = "NIGHT"
-
-
-def _retry_key(date: str, slot: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"sleeptech:{date}:{slot}"))
-
-
-def _push(deps, message: dict, retry_key: str) -> None:
-    if "retry_key" in inspect.signature(deps.push_client.push).parameters:
-        deps.push_client.push(message, retry_key=retry_key)
-    else:
-        deps.push_client.push(message)
 
 
 @dataclass
@@ -72,12 +62,16 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
     # 4-5. 文章化と検証
     # require_day_prefix=True: 就寝時刻が日跨ぎ（bedtime_h >= 24.0）のとき、
     # 本文中の時刻表記に「翌」が付いていることまで照合する（夜フロー限定）。
+    # I4対応: 低下率0%の晩は percents を必須値から外す。0を必須にすると
+    # LLMは本文に文字どおり「0%」を含めないとガードレールを通せず、
+    # 「ほぼ低下しません」のような自然な表現が numbers 判定で弾かれてしまう
+    # （平常な晩ほどテンプレート文に落ちる、という逆転が起きていた）。
     facts = gv.Facts(
         times=[advice.bedtime_h],
-        percents=[advice.mean_drop_pct],
+        percents=[advice.mean_drop_pct] if advice.mean_drop_pct != 0 else [],
         require_day_prefix=True,
     )
-    body, used_fallback = _compose(deps, advice, baseline, debt_h, facts, log)
+    body, used_fallback, regen_count = _compose(deps, advice, baseline, debt_h, facts, log)
 
     # 6. 送信
     # LinePushClient.push は HTTPError/URLError を捕捉せず送出する。
@@ -121,6 +115,15 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
     except Exception as exc:  # noqa: BLE001 — push 成功後の失敗は伝播させない
         log.log("save_prediction_failed", error=str(exc))
 
+    # I5対応: 仕様 第9節 MSG#NIGHT。本文・ガードレール結果・再生成回数・送信可否を記録する。
+    _save_message(
+        deps, date, SLOT, body,
+        guardrail_passed=not used_fallback,
+        regen_count=regen_count,
+        delivered=True,
+        log=log,
+    )
+
     return {
         "delivered": True,
         "skipped": False,
@@ -130,8 +133,12 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
     }
 
 
-def _compose(deps, advice, baseline, debt_h, facts, log) -> tuple[str, bool]:
-    """LLM で文章化し検証する。通らなければテンプレート文を返す。"""
+def _compose(deps, advice, baseline, debt_h, facts, log) -> tuple[str, bool, int]:
+    """LLM で文章化し検証する。通らなければテンプレート文を返す。
+
+    戻り値の3つめは regen_count（ガードレール不通過による再試行回数。
+    最初の1回は含まない）。
+    """
     user = prompts.night_user(advice, baseline, debt_h)
     for attempt in range(deps.max_regen + 1):
         if deps.deadline is not None and not deps.deadline.can_start():
@@ -143,6 +150,6 @@ def _compose(deps, advice, baseline, debt_h, facts, log) -> tuple[str, bool]:
             break
         result = gv.validate(text, facts)
         if result.passed:
-            return text, False
+            return text, False, attempt
         log.log("guardrail_rejected", attempt=attempt, reason=result.reason)
-    return fallback.night_text(advice, baseline, debt_h), True
+    return fallback.night_text(advice, baseline, debt_h), True, deps.max_regen

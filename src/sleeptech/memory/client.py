@@ -6,7 +6,7 @@ from datetime import date as date_cls
 from datetime import timedelta
 import time
 
-from sleeptech.memory.schemas import DailyVital, Feedback, Prediction
+from sleeptech.memory.schemas import DailyVital, Feedback, Message, Prediction
 
 PK_VITAL = "VITAL"
 PK_FEEDBACK = "FEEDBACK"
@@ -16,6 +16,10 @@ SK_META = "META"
 
 def _pk_prediction(slot: str) -> str:
     return f"PREDICT#{slot}"
+
+
+def _pk_message(slot: str) -> str:
+    return f"MSG#{slot}"
 
 
 def _pk_idem(slot: str) -> str:
@@ -103,6 +107,14 @@ class MemoryClient:
     def get_prediction(self, date: str, slot: str) -> Prediction | None:
         raw = self._backend.get(_pk_prediction(slot), date)
         return Prediction.from_dict(raw) if raw else None
+
+    def save_message(self, msg: Message) -> None:
+        """仕様 第9節 MSG#NIGHT / MSG#MORNING。送信した本文と検証結果を記録する。"""
+        self._backend.put(_pk_message(msg.slot), msg.date, msg.to_dict())
+
+    def get_message(self, date: str, slot: str) -> Message | None:
+        raw = self._backend.get(_pk_message(slot), date)
+        return Message.from_dict(raw) if raw else None
 
     def save_feedback(self, fb: Feedback) -> None:
         self._backend.put(PK_FEEDBACK, fb.date, fb.to_dict())

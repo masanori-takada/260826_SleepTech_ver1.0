@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 
-from aws_cdk import Duration, RemovalPolicy, Stack
+from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_dynamodb as ddb
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
@@ -98,7 +98,10 @@ class SleepTechStack(Stack):
             for secret_key in secret_keys:
                 secret_refs[secret_key].grant_read(function)
 
-        webhook_fn.add_function_url(auth_type=lambda_.FunctionUrlAuthType.NONE)
+        webhook_url = webhook_fn.add_function_url(auth_type=lambda_.FunctionUrlAuthType.NONE)
+        # Minor対応: LINE Developers コンソールに貼るWebhook URLをコンソールで
+        # 探し回らずに済むよう、デプロイ出力に出す。
+        CfnOutput(self, "WebhookFunctionUrl", value=webhook_url.url)
 
         self._schedule(
             "NightSchedule",

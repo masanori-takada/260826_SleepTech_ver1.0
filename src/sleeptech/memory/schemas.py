@@ -165,6 +165,32 @@ class Prediction:
 
 
 @dataclass
+class Message:
+    """送信した本文の記録（仕様 第9節 MSG#NIGHT / MSG#MORNING）。
+
+    障害時に「何を送ったか」を後から追えるようにするための監査用エンティティ。
+    guardrail_passed=False は LLM 文章化が通らずテンプレート文（フォールバック）
+    を送ったことを表す。regen_count は LLM への再生成試行回数
+    （最初の1回は含まず、ガードレール不通過による再試行の回数）。
+    """
+
+    date: str
+    slot: str
+    body: str = ""
+    guardrail_passed: bool = False
+    regen_count: int = 0
+    delivered: bool = False
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Message:
+        known = {f for f in cls.__dataclass_fields__}
+        return cls(**{k: v for k, v in d.items() if k in known})
+
+
+@dataclass
 class Feedback:
     """夜のクイックリプライで得た5段階評価。"""
 

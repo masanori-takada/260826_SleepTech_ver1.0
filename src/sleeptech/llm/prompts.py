@@ -50,12 +50,15 @@ def night_user(advice: BedtimeAdvice, baseline: Baseline, debt_h: float) -> str:
         "too_late": "目標達成が難しい時間帯。今すぐ寝るよう促す",
     }[advice.status]
 
-    lines = [
-        f"推奨就寝時刻: {fmt_hm(advice.bedtime_h)}",
-        f"明日の主要時間帯の平均低下率: -{advice.mean_drop_pct}%",
-        f"状況: {status_note}",
-        f"睡眠負債: {debt_h:.1f}時間",
-    ]
+    lines = [f"推奨就寝時刻: {fmt_hm(advice.bedtime_h)}"]
+    # I4対応: 低下率0%のときは % を本文に書かせない（「0%」の明記を必須にすると
+    # 平常な晩ほど不自然な文章を強いることになり、ガードレールにも落ちやすくなる）。
+    if advice.mean_drop_pct != 0:
+        lines.append(f"明日の主要時間帯の平均低下率: -{advice.mean_drop_pct}%")
+    else:
+        lines.append("明日の主要時間帯の平均低下率: ほぼ低下なし（%の数値は本文に書かないこと）")
+    lines.append(f"状況: {status_note}")
+    lines.append(f"睡眠負債: {debt_h:.1f}時間")
     if baseline.is_default:
         lines.append("注意: 履歴が少なく精度が低いことを一言添えること")
     return "\n".join(lines)

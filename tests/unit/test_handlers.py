@@ -497,6 +497,58 @@ def test_webhook_handler_processes_multiple_valid_events(monkeypatch):
     assert morning_calls == [("2026-08-26", "deps"), ("2026-08-26", "deps")]
 
 
+def test_webhook_passes_lambda_deadline_to_morning_deps(monkeypatch):
+    """I2: 「おはよう」検出時の run_morning に deadline を渡す。
+
+    以前は hd.build_morning_deps(settings) を deadline 無しで呼んでおり、
+    Google全取得 + LLM3回試行 + LINE送信が Webhook 応答の中で無制限に
+    走っていた（night_handler / morning_handler は既に deadline を渡している）。
+    """
+    settings = _Settings()
+    settings.secret_line = "sleeptech/line"
+    settings.region = "ap-northeast-1"
+    monkeypatch.setattr(wh, "load_settings", lambda: settings)
+    monkeypatch.setattr(
+        wh.hd,
+        "_secret",
+        lambda name, region: {
+            "channel_secret": LINE_SECRET,
+            "channel_access_token": "token",
+            "user_id": "user",
+        },
+    )
+    monkeypatch.setattr(wh.hd, "jst_now", lambda: datetime(2026, 8, 27, 8, tzinfo=JST))
+
+    deadline = object()
+    monkeypatch.setattr(wh.hd, "deadline_from_context", lambda context: deadline)
+    captured = {}
+
+    def fake_build_morning_deps(settings, actual):
+        captured["deadline"] = actual
+        return "deps"
+
+    monkeypatch.setattr(wh.hd, "build_morning_deps", fake_build_morning_deps)
+    morning_calls = []
+    monkeypatch.setattr(
+        wh, "run_morning",
+        lambda date, deps: morning_calls.append((date, deps)) or {"delivered": True},
+    )
+
+    event = _webhook_event(
+        [{"type": "message", "message": {"type": "text", "text": "おはよう"}}]
+    )
+
+    class Context:
+        def get_remaining_time_in_millis(self):
+            return 60000
+
+    result = wh.handler(event, Context())
+
+    assert result["statusCode"] == 200
+    assert captured["deadline"] is deadline
+    assert morning_calls == [("2026-08-26", "deps")]
+
+
 def test_texts_returns_only_string_texts_from_valid_events():
     event = {
         "events": [

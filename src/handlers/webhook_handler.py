@@ -235,7 +235,14 @@ def handler(event, context=None) -> dict:
 
         if is_wakeup_trigger(text):
             date = hd.origin_date(now, morning=True)
-            run_morning(date, hd.build_morning_deps(settings))
+            # I2対応: deadline を渡さないと Google API 全取得 + LLM3回試行 + LINE送信が
+            # Webhook 応答の中で無制限に走り、数十秒 200 を返せなくなる
+            # （LLM の時間予算ガードも deadline が無いと効かない）。
+            # night_handler / morning_handler と同じく deadline_from_context を使う。
+            deadline = hd.deadline_from_context(context)
+            deps = (hd.build_morning_deps(settings, deadline) if deadline is not None
+                    else hd.build_morning_deps(settings))
+            run_morning(date, deps)
             log.log("wakeup_triggered", date=date)
             handled.append("wakeup")
 

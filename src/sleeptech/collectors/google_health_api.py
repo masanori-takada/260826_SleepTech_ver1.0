@@ -28,10 +28,10 @@ BASE_URL = "https://health.googleapis.com/v4"
 
 # --- dailyRollUp 系（POST）: field -> (型ID, camelキー, 値フィールド, キャスト, スケール) ---
 # スケール: APIが返す単位からストア単位への変換係数（通常1.0、体重のみグラム→kg で0.001）
+# next_day_steps / next_day_calories は DailyVital に対応フィールドが無く
+# to_daily_vital() で常に捨てられていたため削除した（Minor: 無駄なAPI呼び出し）。
 _ROLLUP_MAP: dict[str, tuple[str, str, str, type, float]] = {
     "night_avg_hr": ("heart-rate", "heartRate", "beatsPerMinuteAvg", float, 1.0),
-    "next_day_steps": ("steps", "steps", "countSum", int, 1.0),
-    "next_day_calories": ("active-energy-burned", "activeEnergyBurned", "kcalSum", int, 1.0),
     "weight_kg": ("weight", "weight", "weightGramsAvg", float, 0.001),      # API単位=グラム
     "body_fat_pct": ("body-fat", "bodyFat", "bodyFatPercentageAvg", float, 1.0),
 }
@@ -47,6 +47,10 @@ _LIST_MAP: dict[str, tuple[str, str, str]] = {
 _SLEEP_TYPE = "sleep"
 MAX_LIST_PAGES = 4
 LIST_TIME_BUDGET_SEC = 8.0
+# I1対応: 個々のHTTPリクエストのタイムアウト。旧値20秒だと dailyRollUp×3 +
+# HRV list + sleep list（各最大4ページ）を直列で叩いた場合の最悪待ちが
+# MorningFn のLambdaタイムアウト60秒を優に超えていた。3〜5秒に短縮する。
+HTTP_TIMEOUT_SEC = 4.0
 
 
 class GoogleHealthApiSource:
@@ -60,6 +64,8 @@ class GoogleHealthApiSource:
         clock: Callable[[], float] | None = None,
         max_list_pages: int = MAX_LIST_PAGES,
         list_time_budget_sec: float = LIST_TIME_BUDGET_SEC,
+        deadline: object | None = None,
+        http_timeout_sec: float = HTTP_TIMEOUT_SEC,
     ) -> None:
         self._token_provider = access_token_provider
         self._http_post = http_post or _default_http_post
@@ -67,9 +73,21 @@ class GoogleHealthApiSource:
         self._clock = clock or time.monotonic
         self._max_list_pages = max(1, max_list_pages)
         self._list_time_budget_sec = max(0.1, list_time_budget_sec)
+        # I1対応: Lambda の残り時間（ExecutionDeadline 互換: can_start(expected_sec)）。
+        # None なら従来どおり無制限（単体テストや他呼び出し元との後方互換のため）。
+        self._deadline = deadline
+        self._http_timeout_sec = http_timeout_sec
+
+    def _budget_exhausted(self) -> bool:
+        """残り時間が1リクエスト分（http_timeout_sec）を割っていれば True。"""
+        return self._deadline is not None and not self._deadline.can_start(self._http_timeout_sec)
 
     def fetch_raw(self, date: str) -> dict:
-        """指定日のバイタルを生 dict（キー=VITAL_FIELDS 互換）で返す。"""
+        """指定日のバイタルを生 dict（キー=VITAL_FIELDS 互換）で返す。
+
+        deadline が切れた時点以降のフィールドは取得済み分だけで打ち切り、
+        以降は None（欠損）として返す。欠損は既存の欠損時フォールバックに乗る。
+        """
         try:
             token = self._token_provider()
         except PermissionError as exc:
@@ -80,14 +98,26 @@ class GoogleHealthApiSource:
 
         # dailyRollUp 系
         for field, (type_id, camel, value_field, cast, scale) in _ROLLUP_MAP.items():
+            if self._budget_exhausted():
+                raw[field] = None
+                continue
             raw[field] = self._fetch_rollup(date, type_id, camel, value_field, cast, scale, headers)
 
         # list 系（HRV）
         for field, (type_id, camel, value_field) in _LIST_MAP.items():
+            if self._budget_exhausted():
+                raw[field] = None
+                continue
             raw[field] = self._fetch_list_avg(date, type_id, camel, value_field, headers)
 
         # 睡眠（スコープがあれば取得、無ければ None）
-        raw.update(self._fetch_sleep(date, headers))
+        if self._budget_exhausted():
+            raw.update({
+                "total_sleep_min": None, "deep_sleep_min": None, "rem_sleep_min": None,
+                "awakenings": None, "bedtime_h": None, "wake_h": None,
+            })
+        else:
+            raw.update(self._fetch_sleep(date, headers))
         return raw
 
     # ---- dailyRollUp ----
@@ -119,6 +149,11 @@ class GoogleHealthApiSource:
         started = self._clock()
         for _page in range(self._max_list_pages):
             if self._clock() - started >= self._list_time_budget_sec:
+                break
+            # I1対応: LIST_TIME_BUDGET_SEC はページ取得の「前」しか見ないため、
+            # 1回のブロッキングI/Oがhttp_timeout_sec分かかると予算を超過しうる。
+            # deadline があれば、次の1ページ分の残り時間も確認してから発行する。
+            if self._budget_exhausted():
                 break
             params: dict = {"pageSize": 1000}
             if next_token:
@@ -159,6 +194,8 @@ class GoogleHealthApiSource:
         started = self._clock()
         for _page in range(self._max_list_pages):
             if self._clock() - started >= self._list_time_budget_sec:
+                break
+            if self._budget_exhausted():
                 break
             params: dict = {"pageSize": 25}
             if next_token:
@@ -394,7 +431,8 @@ def _default_http_post(url: str, headers: dict, body: dict) -> dict:
 
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=20) as r:  # noqa: S310 — 固定の Google 端点
+    # I1対応: 旧タイムアウト20秒はMorningFnの60秒制限に対して長すぎた（HTTP_TIMEOUT_SEC参照）。
+    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SEC) as r:  # noqa: S310 — 固定の Google 端点
         return json.loads(r.read().decode("utf-8"))
 
 
@@ -403,5 +441,5 @@ def _default_http_get(url: str, headers: dict) -> dict:
     import urllib.request
 
     req = urllib.request.Request(url, headers=headers, method="GET")
-    with urllib.request.urlopen(req, timeout=20) as r:  # noqa: S310
+    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SEC) as r:  # noqa: S310
         return json.loads(r.read().decode("utf-8"))

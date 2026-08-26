@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 from sleeptech.memory.client import InMemoryBackend, MemoryClient
 from sleeptech.memory.dynamo_backend import DynamoBackend
-from sleeptech.memory.schemas import DailyVital, Feedback, Prediction
+from sleeptech.memory.schemas import DailyVital, Feedback, Message, Prediction
 
 
 class _ConditionalCheckFailedException(Exception):
@@ -76,6 +76,31 @@ def test_save_and_get_prediction_by_slot():
     c.save_prediction(Prediction(date="2026-08-26", slot="MORNING", mean_drop_pct=19))
     assert c.get_prediction("2026-08-26", "NIGHT").mean_drop_pct == 8
     assert c.get_prediction("2026-08-26", "MORNING").mean_drop_pct == 19
+
+
+def test_save_and_get_message_by_slot():
+    """I5対応: 仕様 第9節 MSG#NIGHT / MSG#MORNING。本文と検証結果を保存・取得できる。"""
+    c = _client()
+    c.save_message(Message(
+        date="2026-08-26", slot="NIGHT", body="今夜は23:30までに就寝を。",
+        guardrail_passed=True, regen_count=0, delivered=True,
+    ))
+    c.save_message(Message(
+        date="2026-08-26", slot="MORNING", body="おはようございます。",
+        guardrail_passed=False, regen_count=2, delivered=True,
+    ))
+    night_msg = c.get_message("2026-08-26", "NIGHT")
+    morning_msg = c.get_message("2026-08-26", "MORNING")
+    assert night_msg.body == "今夜は23:30までに就寝を。"
+    assert night_msg.guardrail_passed is True
+    assert night_msg.regen_count == 0
+    assert morning_msg.guardrail_passed is False
+    assert morning_msg.regen_count == 2
+
+
+def test_get_message_returns_none_when_absent():
+    c = _client()
+    assert c.get_message("2026-08-26", "NIGHT") is None
 
 
 def test_idempotency_is_per_date_and_slot():

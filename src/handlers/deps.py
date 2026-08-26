@@ -96,14 +96,17 @@ def _push(settings):
     return LinePushClient(s.get("channel_access_token", ""), s.get("user_id", ""))
 
 
-def _health_source(settings):
+def _health_source(settings, deadline=None):
     from sleeptech.collectors.google_auth_helper import get_access_token
     from sleeptech.collectors.google_health_api import GoogleHealthApiSource
 
     def provider() -> str:
         return get_access_token(_secret(settings.secret_google, settings.region))
 
-    return GoogleHealthApiSource(provider)
+    # I1対応: deadline を渡すと、残り時間が1リクエスト分を割った時点で
+    # 以降のGoogle API呼び出しを打ち切り、取得済みデータだけで集計する
+    # （無ければ欠損として安全に扱う既存フォールバックに乗る）。
+    return GoogleHealthApiSource(provider, deadline=deadline)
 
 
 def build_night_deps(settings, deadline=None):
@@ -124,7 +127,7 @@ def build_morning_deps(settings, deadline=None):
     return MorningDeps(
         settings=settings,
         memory=_memory(settings),
-        health_source=_health_source(settings),
+        health_source=_health_source(settings, deadline),
         llm_client=_llm(settings, deadline),
         push_client=_push(settings),
         deadline=deadline,

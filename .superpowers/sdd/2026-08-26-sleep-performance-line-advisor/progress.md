@@ -70,3 +70,7 @@
   - Controller fresh verification: `python -m pytest -q` = 326 passed; `git diff --check` succeeded; `cdk synth SleepTechStack` exited 0.
   - Remaining external/manual work: Secrets registration including `channel_secret`, `cdk diff/deploy`, LINE Webhook configuration, night/morning/LINE real-device verification, and stopping the existing NightRamen Scheduler. User credentials and explicit confirmation are required before these actions.
   - Playwright is not applicable: no browser UI is under local control; LINE Developers console and manual device steps remain user/external work.
+
+- 最終ブランチレビュー2回目 完了: Critical 3 / Important 8 / Minor 多数。
+  指摘一覧は final-review-findings.md に保存。C1・C3 は controller が実機検証で確認済み。
+  判定: Critical 3件を直し I3 を実機確認してからデプロイ。
