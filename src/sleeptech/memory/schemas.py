@@ -11,7 +11,15 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class SleepInput:
-    """予測モデルに渡す1晩分の睡眠。"""
+    """予測モデルに渡す1晩分の睡眠。
+
+    前提条件（呼び出し側で保証すること）:
+    - 0 < duration_h <= 24 であること。
+    - この範囲外の値を渡した場合の model 層の計算結果は保証されない
+      （例外にはならないが、無意味な値が返る可能性がある）。
+    - model 層は純粋関数の責務のため、ここでは妥当性検証を行わない。
+      検証は上位層（DynamoDB からの取得層・ワークフロー層）の責務とする。
+    """
 
     bedtime_h: float
     wake_h: float

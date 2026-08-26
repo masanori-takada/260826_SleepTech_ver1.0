@@ -113,3 +113,30 @@ def test_mean_drop_in_main_window():
     mean = tp.mean_drop_in_main_window(curve, WAKE_H)
     in_window = [d.focus_pct for d in curve if 9 <= d.hour <= 17]
     assert mean == pytest.approx(sum(in_window) / len(in_window))
+
+
+def test_mean_drop_in_main_window_handles_wake_crossing_midnight():
+    """起床時刻が遅く主要時間帯が日をまたぐ場合でも、正しく起床+2h〜+10hを平均する。
+
+    wake_h=38.0（翌日14:00起床）だと主要時間帯（起床+2h=16時〜起床+10h=翌0時）が
+    日をまたぎ、hour（0-23の離散値）で範囲判定すると start > end になって
+    恒常的に false になり、カーブ全体（16時間分）の平均へ黙ってフォールバックする
+    退行がありえる。インデックスベースの実装ではこれが起きないことを確認する。
+    """
+    wake_h = 38.0  # 翌日 14:00 起床
+    baseline = Baseline(
+        wake_h=wake_h, sleep_h=7.5, rem_min=90.0, deep_min=60.0, days_used=14, is_default=False
+    )
+    sleep = SleepInput(bedtime_h=wake_h - 5.0, wake_h=wake_h, rem_min=90.0, deep_min=60.0)
+    curve = tp.predict_curve(sleep, baseline, 0.0)
+
+    start_idx = 2
+    end_idx = 10
+    expected_window = [d.focus_pct for d in curve[start_idx : end_idx + 1]]
+    assert len(expected_window) == 9
+
+    mean = tp.mean_drop_in_main_window(curve, wake_h)
+    assert mean == pytest.approx(sum(expected_window) / len(expected_window))
+
+    full_curve_mean = sum(d.focus_pct for d in curve) / len(curve)
+    assert mean != pytest.approx(full_curve_mean)

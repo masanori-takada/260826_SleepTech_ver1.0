@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 
+from sleeptech.memory.schemas import Baseline, HourlyDrop, SleepInput
 from sleeptech.model import constants as C
 
 
@@ -45,7 +46,7 @@ def performance(alert: float) -> float:
     return 1.0 / (1.0 + math.exp(-C.PERF_STEEPNESS * (alert - C.PERF_THRESHOLD)))
 
 
-def sleep_debt_h(recent: list, baseline) -> float:
+def sleep_debt_h(recent: list[SleepInput], baseline: Baseline) -> float:
     """直近の睡眠不足を減衰加重で積算した負債（時間）。
 
     recent は新しい順に並んだ SleepInput のリスト。先頭ほど重みが大きい。
@@ -57,7 +58,7 @@ def sleep_debt_h(recent: list, baseline) -> float:
     return round(total, 3)
 
 
-def _rem_deficit_ratio(sleep, baseline) -> float:
+def _rem_deficit_ratio(sleep: SleepInput, baseline: Baseline) -> float:
     """REM 不足の比率（0-1）。REM が無ければ深睡眠で代替、両方無ければ 0。"""
     for actual, base in ((sleep.rem_min, baseline.rem_min), (sleep.deep_min, baseline.deep_min)):
         if actual is not None and base:
@@ -65,7 +66,7 @@ def _rem_deficit_ratio(sleep, baseline) -> float:
     return 0.0
 
 
-def _wake_pressure(sleep, debt_h: float, baseline) -> float:
+def _wake_pressure(sleep: SleepInput, debt_h: float, baseline: Baseline) -> float:
     """その晩を寝終えた時点の睡眠圧を求める。
 
     前日の起床時刻は baseline.wake_h - 24 とみなす（前日も同じリズムだった前提）。
@@ -76,7 +77,7 @@ def _wake_pressure(sleep, debt_h: float, baseline) -> float:
     return pressure_asleep(s_bed, max(0.0, sleep.duration_h))
 
 
-def _curve_points(sleep, baseline, debt_h: float) -> list[tuple[float, float]]:
+def _curve_points(sleep: SleepInput, baseline: Baseline, debt_h: float) -> list[tuple[float, float]]:
     """(時刻 t_h, 覚醒度) の列を CURVE_HOURS 時間分返す。"""
     s_wake = _wake_pressure(sleep, debt_h, baseline)
     points = []
@@ -87,14 +88,12 @@ def _curve_points(sleep, baseline, debt_h: float) -> list[tuple[float, float]]:
     return points
 
 
-def predict_curve(sleep, baseline, debt_h: float) -> list:
+def predict_curve(sleep: SleepInput, baseline: Baseline, debt_h: float) -> list[HourlyDrop]:
     """実際の睡眠と平常時を比較し、時間帯別の低下率を返す。
 
     平常時カーブは「同じ起床時刻で baseline.sleep_h だけ寝た場合」。
     低下率は 0 未満にならないようクランプする（寝過ぎでボーナスは出さない）。
     """
-    from sleeptech.memory.schemas import HourlyDrop, SleepInput
-
     ideal = SleepInput(
         bedtime_h=sleep.wake_h - baseline.sleep_h,
         wake_h=sleep.wake_h,
@@ -120,11 +119,22 @@ def predict_curve(sleep, baseline, debt_h: float) -> list:
     return curve
 
 
-def mean_drop_in_main_window(curve: list, wake_h: float) -> float:
-    """主要時間帯（起床+2h 〜 起床+10h）の集中力低下率の平均。"""
-    start = int(wake_h + C.MAIN_WINDOW_START_H) % 24
-    end = int(wake_h + C.MAIN_WINDOW_END_H) % 24
-    picked = [d.focus_pct for d in curve if start <= d.hour <= end]
+def mean_drop_in_main_window(curve: list[HourlyDrop], wake_h: float) -> float:
+    """主要時間帯（起床+2h 〜 起床+10h）の集中力低下率の平均。
+
+    curve は predict_curve が返す「起床時刻から1時間刻みで CURVE_HOURS 個」の
+    連番リストであることを前提とし、インデックス i は wake_h + i 時点に対応する。
+    したがって主要時間帯はインデックス MAIN_WINDOW_START_H 〜 MAIN_WINDOW_END_H
+    にそのまま対応するため、hour（% 24 された離散値）ではなくインデックスで
+    絞り込む。hour で比較すると主要時間帯が日をまたぐ起床時刻（例: 昼過ぎ〜夜の
+    起床）で start > end となり、範囲判定が常に false になるバグがあったため
+    修正した。wake_h はこの前提の下では不要だが、シグネチャ互換のため残す。
+    """
+    start_idx = int(C.MAIN_WINDOW_START_H)
+    end_idx = int(C.MAIN_WINDOW_END_H)
+    picked = [d.focus_pct for d in curve[start_idx : end_idx + 1]]
     if not picked:
+        # curve が主要時間帯の開始にすら届かないほど短い場合の防御的フォールバック。
+        # 通常運用では CURVE_HOURS(16) > end_idx(10) のため発生しない。
         picked = [d.focus_pct for d in curve]
     return sum(picked) / len(picked)
