@@ -13,13 +13,17 @@ from sleeptech.memory.schemas import (
     HourlyDrop,
     RecoveryPlan,
 )
-from sleeptech.timefmt import fmt_hm_plain
+from sleeptech.timefmt import fmt_hm, fmt_hm_plain
 
 _COMMON_RULES = (
     "厳守事項:\n"
     "- 与えられた数値と時刻だけを使うこと。新しい数値・時刻を作ってはならない。\n"
     "- 与えられた数値は必ず本文に含めること。\n"
     "- % は「あなたの平常時を100%とした推定の目安」である旨を必ず添えること。\n"
+    "- 低下率は必ずマイナス符号を付けて `-12%` の形で書くこと。"
+    "`12%` のように符号なしで書いてはならない。\n"
+    "- 時刻は与えられた表記のまま書くこと。「翌」が付いている時刻から「翌」を"
+    "落としてはならない。\n"
     "- 医学的な診断・治療の断定をしないこと。\n"
     "- 「必ず」「確実に」「絶対に」は使わないこと。\n"
     "- 不安を過度に煽らないこと。人格を否定しないこと。\n"
@@ -47,8 +51,8 @@ def night_user(advice: BedtimeAdvice, baseline: Baseline, debt_h: float) -> str:
     }[advice.status]
 
     lines = [
-        f"推奨就寝時刻: {fmt_hm_plain(advice.bedtime_h)}",
-        f"明日の主要時間帯の平均低下率: {advice.mean_drop_pct}%",
+        f"推奨就寝時刻: {fmt_hm(advice.bedtime_h)}",
+        f"明日の主要時間帯の平均低下率: -{advice.mean_drop_pct}%",
         f"状況: {status_note}",
         f"睡眠負債: {debt_h:.1f}時間",
     ]
