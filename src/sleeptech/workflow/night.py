@@ -73,20 +73,38 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
     # そのまま上位へ伝播させることで「本当に届いた時だけ既読化する」
     # 冪等性を守る。
     deps.push_client.push(build_message(body, with_feedback=True))
-    deps.memory.mark_notified(date, SLOT)
     log.log("night_sent", fallback=used_fallback)
 
+    # push は成功済みなので、ここで失敗扱いにすると再試行で二重送信になる。
+    # mark_notified が失敗しても送信自体は完了しているため、ログに残して続行する
+    # （翌日の定時実行は別日付のキーになるため、フラグが立たなくても再送は起きない）。
+    try:
+        marked = deps.memory.mark_notified(date, SLOT)
+        if not marked:
+            # 条件付き書き込みが false ＝ 既に他の実行が通知済みフラグを立てていた
+            # （並行実行の検知）。送信は完了しているため挙動は変えず記録のみ行う。
+            log.log("mark_notified_conflict", date=date, slot=SLOT)
+    except Exception as exc:  # noqa: BLE001 — push 成功後の失敗は伝播させない
+        log.log("mark_notified_failed", error=str(exc))
+
     # 7. 保存
-    deps.memory.save_prediction(
-        Prediction(
-            date=date,
-            slot=SLOT,
-            bedtime_h=advice.bedtime_h,
-            mean_drop_pct=advice.mean_drop_pct,
-            status=advice.status,
-            curve=[asdict(d) for d in advice.curve],
+    # push は成功済みなので、ここで失敗扱いにすると再試行で二重送信になる。
+    # save_prediction が失敗しても実害は限定的（予測レコードが1日分欠けても
+    # ベースライン算出は他の日で成立する）ため、ログに残して続行する。
+    try:
+        deps.memory.save_prediction(
+            Prediction(
+                date=date,
+                slot=SLOT,
+                bedtime_h=advice.bedtime_h,
+                mean_drop_pct=advice.mean_drop_pct,
+                status=advice.status,
+                curve=[asdict(d) for d in advice.curve],
+            )
         )
-    )
+    except Exception as exc:  # noqa: BLE001 — push 成功後の失敗は伝播させない
+        log.log("save_prediction_failed", error=str(exc))
+
     return {
         "delivered": True,
         "skipped": False,

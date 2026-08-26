@@ -140,3 +140,62 @@ def test_is_deterministic():
     a = night.run_night(DATE, NOW_H, _deps())
     b = night.run_night(DATE, NOW_H, _deps())
     assert a["bedtime_h"] == b["bedtime_h"]
+
+
+class _MarkNotifiedFailsMemory(MemoryClient):
+    """mark_notified 呼び出し時に必ず例外を投げる記憶クライアント。"""
+
+    def mark_notified(self, date: str, slot: str) -> bool:
+        raise RuntimeError("mark_notified boom")
+
+
+class _SavePredictionFailsMemory(MemoryClient):
+    """save_prediction 呼び出し時に必ず例外を投げる記憶クライアント。"""
+
+    def save_prediction(self, pred) -> None:
+        raise RuntimeError("save_prediction boom")
+
+
+class _PushFailsClient:
+    """push 呼び出し時に必ず例外を投げる送信クライアント。"""
+
+    def push(self, message: dict) -> None:
+        raise RuntimeError("push boom")
+
+
+def test_mark_notified_failure_does_not_break_delivery():
+    """push 成功後に mark_notified が失敗しても例外は伝播せず delivered=True のまま。"""
+    memory = _MarkNotifiedFailsMemory(InMemoryBackend())
+    for i in range(1, 15):
+        from datetime import date as d, timedelta
+
+        day = (d.fromisoformat(DATE) - timedelta(days=i)).isoformat()
+        memory.save_vital(DailyVital(date=day, total_sleep_min=450, bedtime_h=23.5,
+                                      wake_h=31.0, rem_sleep_min=90, deep_sleep_min=60))
+    push = FakePushClient()
+    result = night.run_night(DATE, NOW_H, _deps(memory=memory, push=push))
+    assert len(push.sent) == 1
+    assert result["delivered"] is True
+
+
+def test_save_prediction_failure_does_not_break_delivery():
+    """push 成功後に save_prediction が失敗しても例外は伝播せず delivered=True のまま。"""
+    memory = _SavePredictionFailsMemory(InMemoryBackend())
+    for i in range(1, 15):
+        from datetime import date as d, timedelta
+
+        day = (d.fromisoformat(DATE) - timedelta(days=i)).isoformat()
+        memory.save_vital(DailyVital(date=day, total_sleep_min=450, bedtime_h=23.5,
+                                      wake_h=31.0, rem_sleep_min=90, deep_sleep_min=60))
+    push = FakePushClient()
+    result = night.run_night(DATE, NOW_H, _deps(memory=memory, push=push))
+    assert len(push.sent) == 1
+    assert result["delivered"] is True
+
+
+def test_push_failure_still_propagates_and_leaves_not_notified():
+    """回帰: push の失敗は今まで通り伝播し、is_notified は False のままである。"""
+    memory = _memory()
+    with pytest.raises(RuntimeError):
+        night.run_night(DATE, NOW_H, _deps(memory=memory, push=_PushFailsClient()))
+    assert memory.is_notified(DATE, "NIGHT") is False
