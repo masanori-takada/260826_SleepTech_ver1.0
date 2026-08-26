@@ -21,5 +21,9 @@
 python -m pytest
 ```
 
-仕様: `docs/superpowers/specs/2026-08-26-sleep-performance-line-advisor-design.md`
-計画: `docs/superpowers/plans/2026-08-26-sleep-performance-line-advisor.md`
+## ドキュメント
+
+- 構成図: `docs/architecture.md`
+- デプロイ手順: `docs/deploy.md`
+- 仕様: `docs/superpowers/specs/2026-08-26-sleep-performance-line-advisor-design.md`
+- 計画: `docs/superpowers/plans/2026-08-26-sleep-performance-line-advisor.md`
