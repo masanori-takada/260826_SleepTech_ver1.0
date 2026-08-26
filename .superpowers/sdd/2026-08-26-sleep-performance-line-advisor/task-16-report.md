@@ -40,3 +40,31 @@ Task 16実装・テスト・本レポートをまとめてコミットする。
 - `LLM_MODEL=gpt-5.6-luna`は暫定値で、API実機値はTask 17で確認する。
 - Secretの実値登録、CDK deploy、Function URLのLINE設定はTask 17の対象。
 - 既存の未追跡`.agents/`と`AGENTS.md`は本タスクの変更対象外として保持した。
+
+## レビュー修正ラウンド1
+
+### 修正内容
+
+- `REPO_ROOT`を`infra/stacks`から2階層上のリポジトリルートへ修正。CDKの実stagingアセット直下に`src/handlers/`と3 handlerが存在するテストを追加。
+- Secret Manager権限をLambda単位で最小化。
+  - NightFn: LINE、OpenAI
+  - MorningFn: Google、LINE、OpenAI
+  - WebhookFn: Google、LINE、OpenAI
+- 3 Lambdaと2 Schedulerを個別に検査し、DynamoDBのDeletionPolicy/UpdateReplacePolicy=Retainも検査。
+- 依存を実測値へ厳密固定。
+  - `aws-cdk-lib==2.259.0`
+  - `constructs==10.6.0`
+  - CDK CLI `2.1126.0 (build a90d578)`
+- Webhook Function URLのNONEは維持。LINE署名検証はTask16では実装しない。
+
+### TDD・検証
+
+- RED: Secret権限テストでNightFnのGoogle権限を検出し、アセットrootテストでworktree親を検出。
+- RED: 実stagingアセットテスト追加時に未定義`ASSET_EXCLUDES`を検出。
+- GREEN: `python -m pytest tests/unit/test_infra_synth.py -v` → `20 passed`。
+- 全suite: `python -m pytest -q` → `305 passed`。
+- Synth: `cd infra && npx cdk synth SleepTechStack` → exit 0。実アセット直下に`src/`と3 handlerを確認。
+
+### セキュリティゲート
+
+LINE署名検証は公開前必須のTask17セキュリティゲート。未実装のままdeploy不可。

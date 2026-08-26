@@ -18,12 +18,13 @@ from aws_cdk import aws_scheduler as scheduler
 from constructs import Construct
 
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SECRET_NAMES = {
     "google": "sleeptech/google-oauth",
     "line": "sleeptech/line",
     "openai": "sleeptech/openai",
 }
+ASSET_EXCLUDES = [".git", ".venv", ".pytest_cache", "cdk.out", "tests", "docs"]
 
 
 class SleepTechStack(Stack):
@@ -73,10 +74,15 @@ class SleepTechStack(Stack):
             "WebhookFn", "src.handlers.webhook_handler.handler", environment
         )
 
-        for function in (night_fn, morning_fn, webhook_fn):
+        secret_access = {
+            night_fn: ("line", "openai"),
+            morning_fn: ("google", "line", "openai"),
+            webhook_fn: ("google", "line", "openai"),
+        }
+        for function, secret_keys in secret_access.items():
             table.grant_read_write_data(function)
-            for secret in secret_refs.values():
-                secret.grant_read(function)
+            for secret_key in secret_keys:
+                secret_refs[secret_key].grant_read(function)
 
         webhook_fn.add_function_url(auth_type=lambda_.FunctionUrlAuthType.NONE)
 
@@ -101,7 +107,7 @@ class SleepTechStack(Stack):
             handler=handler,
             code=lambda_.Code.from_asset(
                 REPO_ROOT,
-                exclude=[".git", ".venv", ".pytest_cache", "cdk.out", "tests", "docs"],
+                exclude=ASSET_EXCLUDES,
             ),
             timeout=Duration.seconds(60),
             memory_size=512,
