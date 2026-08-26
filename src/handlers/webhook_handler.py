@@ -1,0 +1,86 @@
+"""LINE Webhook Lambda。
+
+役割は2つ。
+1. 起床トリガー（「おはよう」等）を検出したら run_morning を前倒し実行する
+   （収集だけでなく送信まで行う。冪等は run_morning が担保する）
+2. クイックリプライの回答（評価:N）を直近の未回答の夜予測に紐付けて保存する
+
+どちらでもないメッセージは何もしない（ver1.0 に会話機能は無い）。
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from datetime import date as date_cls
+from datetime import timedelta
+
+from sleeptech.config import load_settings
+from sleeptech.memory.schemas import Feedback
+from sleeptech.notifier.line import parse_feedback
+from sleeptech.observability import StructuredLogger
+from sleeptech.workflow.morning import run_morning
+from src.handlers import deps as hd
+
+_WAKEUP_RE = re.compile(r"^(おはよう(ございます)?|起きた|おきた|データ更新|同期|計測)$")
+FEEDBACK_LOOKBACK_DAYS = 2
+
+
+def is_wakeup_trigger(text: str) -> bool:
+    """起床トリガー語か判定する。完全一致のみ（質問文を誤検知しないため）。"""
+    return bool(_WAKEUP_RE.match((text or "").strip()))
+
+
+def resolve_feedback_date(memory, today: str) -> str | None:
+    """回答を紐付ける日付を返す。直近の未回答の夜予測を最大2日分遡って探す。"""
+    base = date_cls.fromisoformat(today)
+    for i in range(FEEDBACK_LOOKBACK_DAYS):
+        d = (base - timedelta(days=i)).isoformat()
+        if memory.get_prediction(d, "NIGHT") and memory.get_feedback(d) is None:
+            return d
+    return None
+
+
+def _texts(event) -> list[str]:
+    """Webhook イベントからテキストメッセージ本文を取り出す。"""
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except (TypeError, ValueError):
+        return []
+    out = []
+    for ev in body.get("events", []):
+        msg = ev.get("message") or {}
+        if ev.get("type") == "message" and msg.get("type") == "text":
+            out.append(msg.get("text", ""))
+    return out
+
+
+def handler(event, context=None) -> dict:
+    log = StructuredLogger()
+    settings = load_settings()
+    now = hd.jst_now()
+    handled = []
+
+    for text in _texts(event or {}):
+        score = parse_feedback(text)
+        if score is not None:
+            memory = hd._memory(settings)
+            target = resolve_feedback_date(memory, hd.origin_date(now))
+            if target:
+                memory.save_feedback(
+                    Feedback(date=target, score=score,
+                             answered_at=now.isoformat(timespec="seconds"))
+                )
+                log.log("feedback_saved", date=target, score=score)
+                handled.append("feedback")
+            else:
+                log.log("feedback_unmatched", score=score)
+            continue
+
+        if is_wakeup_trigger(text):
+            date = hd.origin_date(now, morning=True)
+            run_morning(date, hd.build_morning_deps(settings))
+            log.log("wakeup_triggered", date=date)
+            handled.append("wakeup")
+
+    return {"statusCode": 200, "body": json.dumps({"handled": handled})}
