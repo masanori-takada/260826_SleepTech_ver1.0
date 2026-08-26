@@ -242,3 +242,13 @@ def test_synth_asset_root_contains_src_and_all_handler_files():
         "webhook_handler.py",
     ):
         assert (asset_root / "src" / "handlers" / handler_name).is_file()
+    for development_item in (
+        ".agents",
+        ".claude",
+        ".specify",
+        ".superpowers",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "infra",
+    ):
+        assert not (asset_root / development_item).exists()

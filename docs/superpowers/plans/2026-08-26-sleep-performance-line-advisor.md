@@ -4383,7 +4383,7 @@ git commit -m "feat(infra): CDK スタック（Lambda×3・Scheduler×2・Dynamo
 
 **Files:**
 - Create: `docs/deploy.md`
-- Modify: なし（コード変更なし）
+- Modify: `src/handlers/webhook_handler.py`, `tests/unit/test_handlers.py`
 
 **Interfaces:**
 - Consumes: Task 16 の `SleepTechStack`
@@ -4392,8 +4392,9 @@ git commit -m "feat(infra): CDK スタック（Lambda×3・Scheduler×2・Dynamo
 **このタスクは利用者の手作業に依存する。** 以下の3点が揃うまでデプロイできない。
 
 1. LINE Developers で SleepTech 用 Messaging API チャネルを作成し、チャネルアクセストークンと userId を取得
-2. OpenAI の API キー
-3. **「GPT5.6 luna」の正確なモデルID文字列**（判明していなければ暫定値のまま進め、実機で 400/404 を確認してから差し替える）
+2. LINEチャネルシークレットを取得
+3. OpenAI の API キー
+4. **「GPT5.6 luna」の正確なモデルID文字列**（判明していなければ暫定値のまま進め、実機で 400/404 を確認してから差し替える）
 
 - [ ] **Step 1: 全テストが通ることを確認**
 
@@ -4413,24 +4414,40 @@ rm /tmp/g.json
 LINE と OpenAI は新規に登録する。値は利用者から受け取ること。
 
 ```bash
-aws secretsmanager create-secret --name sleeptech/line --secret-string '{"channel_access_token":"<TOKEN>","user_id":"<USER_ID>"}'
+aws secretsmanager create-secret --name sleeptech/line --secret-string '{"channel_access_token":"<TOKEN>","user_id":"<USER_ID>","channel_secret":"<CHANNEL_SECRET>"}'
 aws secretsmanager create-secret --name sleeptech/openai --secret-string '{"api_key":"<OPENAI_API_KEY>"}'
 ```
 
-- [ ] **Step 3: 差分を確認してからデプロイする**
+- [ ] **Step 3: WebhookのLINE署名検証を実装し、テストする**
+
+`src/handlers/webhook_handler.py`で、LINEから受け取ったraw bodyと`x-line-signature`を検証する。チャネルシークレットはSecrets Managerの`sleeptech/line`に保存し、署名検証にはHMAC-SHA256とconstant-time compareを使う。raw bodyの改変、JSON再シリアライズ、通常の文字列比較による検証は禁止する。
+
+検証要件:
+
+- 署名ヘッダー欠落は401を返す。
+- 署名不一致は403を返す。
+- 正しい署名は既存Webhook処理へ進む。
+- 欠落・不一致・成功の各ケースを`tests/unit/test_handlers.py`でテストし、全件成功すること。
+
+**この署名検証テストが成功するまで、CDK diff・deployへ進まない。**
+
+- [ ] **Step 4: 差分を確認してからデプロイする**
 
 Run: `cd infra && npx cdk diff SleepTechStack`
 Expected: 全リソースが新規作成（`+`）であること。既存スタックではないので削除（`-`）は現れない。
 
 ```bash
+cd infra && npx cdk synth SleepTechStack
 cd infra && npx cdk deploy SleepTechStack --require-approval never
 ```
 
-- [ ] **Step 4: Webhook URL を LINE に設定する**
+`python -m pytest -q`と署名検証テストが成功した後にのみdeployする。
+
+- [ ] **Step 5: Webhook URL を LINE に設定する**
 
 デプロイ出力の Function URL を LINE Developers の Webhook URL に設定し、「Webhookの利用」を ON にする。**この作業は利用者が行う。**
 
-- [ ] **Step 5: 既存 Night Ramen を停止する**
+- [ ] **Step 6: 既存 Night Ramen を停止する**
 
 利用者の確認を取ってから実行すること。停止は EventBridge Scheduler の無効化で行い、スタックは削除しない（データを残すため）。
 
@@ -4439,7 +4456,7 @@ aws scheduler list-schedules --query "Schedules[?contains(Name, 'NightRamen')].N
 aws scheduler update-schedule --name <取得した名前> --state DISABLED --schedule-expression "<既存の式>" --flexible-time-window '{"Mode":"OFF"}' --target '<既存のターゲットJSON>'
 ```
 
-- [ ] **Step 6: 夜フローを手動実行して確認**
+- [ ] **Step 7: 夜フローを手動実行して確認**
 
 ```bash
 aws lambda invoke --function-name <NightFn の物理名> --payload '{"date":"2026-08-26","now_h":22.5}' --cli-binary-format raw-in-base64-out /tmp/night.json
@@ -4451,7 +4468,7 @@ cat /tmp/night.json
 - 5段階のクイックリプライが表示される
 - `used_fallback` が `false`（`true` ならモデルIDが誤っている可能性。CloudWatch Logs の `llm_failed` を確認する）
 
-- [ ] **Step 7: モデルIDを確認して必要なら差し替える**
+- [ ] **Step 8: モデルIDを確認して必要なら差し替える**
 
 `used_fallback` が `true` で、ログに 404 または `model_not_found` が出ている場合、`LLM_MODEL` の値が誤っている。正しい値を確認して差し替える。
 
@@ -4459,9 +4476,9 @@ cat /tmp/night.json
 aws lambda update-function-configuration --function-name <NightFn の物理名> --environment "Variables={LLM_MODEL=<正しいモデルID>,...}"
 ```
 
-**コード変更は不要。** 環境変数の差し替えだけで済むよう設計してある。恒久化するには `infra/stacks/sleeptech_stack.py` の `LLM_MODEL` を書き換えて再デプロイする。
+Task17では署名検証コードの変更を含む。モデルIDについては環境変数の差し替えだけで済むよう設計してある。恒久化するには `infra/stacks/sleeptech_stack.py` の `LLM_MODEL` を書き換えて再デプロイする。
 
-- [ ] **Step 8: 朝フローを手動実行して確認**
+- [ ] **Step 9: 朝フローを手動実行して確認**
 
 ```bash
 aws lambda invoke --function-name <MorningFn の物理名> --payload '{"date":"2026-08-26"}' --cli-binary-format raw-in-base64-out /tmp/morning.json
@@ -4473,7 +4490,7 @@ cat /tmp/morning.json
 - LINE に時間帯別の低下率とカフェイン・光曝露の時刻が届く
 - クイックリプライは付いていない（朝は聞かない）
 
-- [ ] **Step 9: 実機で LINE から確認**
+- [ ] **Step 10: 実機で LINE から確認**
 
 - 「おはよう」と送る → その場で朝のアドバイスが届く
 - もう一度「おはよう」と送る → **2通目は届かない**（冪等が効いている）
@@ -4483,11 +4500,11 @@ cat /tmp/morning.json
 aws dynamodb get-item --table-name SleepTechTable --key '{"pk":{"S":"FEEDBACK"},"sk":{"S":"2026-08-26"}}'
 ```
 
-- [ ] **Step 10: deploy.md に手順を残す**
+- [ ] **Step 11: deploy.md に手順を残す**
 
 上記 Step 2〜9 の内容を `docs/deploy.md` にまとめる。Function URL、Lambda の物理名、実行したコマンドの実際の値を記録すること。
 
-- [ ] **Step 11: コミット**
+- [ ] **Step 12: コミット**
 
 ```bash
 git add docs/deploy.md
@@ -4499,6 +4516,7 @@ git commit -m "docs: デプロイ手順と実機確認の結果を記録"
 ## 完了条件
 
 - `python -m pytest -q` が全件 PASS
+- 署名欠落・署名不一致・正しい署名のWebhookテストが全件 PASS
 - `cd infra && npx cdk diff SleepTechStack` の差分がゼロ
 - LINE で夜・朝の両方のメッセージを実際に受信できている
 - 「おはよう」の二重送信が起きない
@@ -4514,4 +4532,4 @@ git commit -m "docs: デプロイ手順と実機確認の結果を記録"
 | モデル定数を調整した | `constants.py` のコメントに実測値と調整理由を残す。仕様書 第5節の期待出力表も更新する |
 | `test_drop_is_within_plausible_range` が通らない | 調整してよいのは `CIRCADIAN_AMPLITUDE` `HARMONIC_RATIO` `PERF_STEEPNESS` `PERF_THRESHOLD` の4つのみ。順序関係のテストを壊さないこと |
 | Google Health が REM を返さない | `_derive_sleep_metrics` は `rem_sleep_min=0` を返す。`_rem_deficit_ratio` が深睡眠にフォールバックするので実装変更は不要 |
-| LINE の Webhook 署名検証を入れたい | ver1.0 のスコープ外。入れる場合は `sleeptech/line` に `channel_secret` を追加し、`webhook_handler` の冒頭で HMAC-SHA256 を検証する |
+| LINEのWebhook署名検証 | 公開前必須。`sleeptech/line`へ`channel_secret`を登録し、raw bodyに対するHMAC-SHA256とconstant-time compareを実装する。署名欠落は401、不一致は403とし、検証テスト成功後のみdeployする |

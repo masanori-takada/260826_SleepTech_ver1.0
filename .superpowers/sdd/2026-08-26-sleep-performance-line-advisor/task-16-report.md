@@ -68,3 +68,25 @@ Task 16実装・テスト・本レポートをまとめてコミットする。
 ### セキュリティゲート
 
 LINE署名検証は公開前必須のTask17セキュリティゲート。未実装のままdeploy不可。
+
+## レビュー修正ラウンド2
+
+### 修正内容
+
+- Lambda assetの開発管理物を追加除外。`.agents/`、`.claude/`、`.specify/`、`.superpowers/`、`AGENTS.md`、`CLAUDE.md`、`infra/`を除外し、`src/`と3 handlerは維持。
+- CDK `AssetStaging`を使い、合成アセット直下に`src/handlers/`の3 handlerが存在し、開発管理物が存在しないことをテスト。
+- Task17計画を更新。`webhook_handler.py`と署名検証テストを変更対象に追加し、raw body、HMAC-SHA256、constant-time compare、欠落401、不一致403、成功ケースのテストをdeploy前ゲートとして明記。
+- `sleeptech/line` Secret登録例へ`channel_secret`を追加。
+- Task17の完了条件へ署名欠落・不一致テストを追加し、ver1.0 scope外の記述を公開前必須ゲートへ更新。
+- 署名検証コード自体はTask16では実装していない。Task17で実装・5.6-solレビューを行う。
+
+### TDD・検証
+
+- RED: 開発管理物の除外テストが`.agents/`のasset残存で失敗。
+- GREEN: `python -m pytest tests/unit/test_infra_synth.py -q` → `20 passed`。
+- 全suite: `python -m pytest -q` → `305 passed`。
+- Synth: `cd infra && npx cdk synth SleepTechStack` → exit 0。合成アセット直下の`src/`と3 handlerを確認。
+
+### 更新後の公開前ゲート
+
+Task17は、raw bodyに対するLINE署名検証（HMAC-SHA256、constant-time compare）を実装し、署名欠落401・不一致403・正しい署名のテストが成功した後にのみCDK deployを許可する。未実装のままdeploy不可。

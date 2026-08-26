@@ -24,7 +24,21 @@ SECRET_NAMES = {
     "line": "sleeptech/line",
     "openai": "sleeptech/openai",
 }
-ASSET_EXCLUDES = [".git", ".venv", ".pytest_cache", "cdk.out", "tests", "docs"]
+ASSET_EXCLUDES = [
+    ".git",
+    ".venv",
+    ".pytest_cache",
+    "cdk.out",
+    "tests",
+    "docs",
+    ".agents",
+    ".claude",
+    ".specify",
+    ".superpowers",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "infra",
+]
 
 
 class SleepTechStack(Stack):
