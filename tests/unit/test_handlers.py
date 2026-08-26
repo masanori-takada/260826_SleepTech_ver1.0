@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.handlers import deps as hd
+from src.handlers import morning_handler as mh
 from src.handlers import night_handler as nh
 from src.handlers import webhook_handler as wh
 
@@ -119,6 +120,30 @@ def test_night_handler_uses_scheduled_time_when_utc_and_wall_clock_roughly_agree
     assert calls == [("2026-08-26", 22.5, "deps")]
 
 
+def test_night_handler_trusts_scheduled_time_despite_long_retry_delay(monkeypatch):
+    """最終レビュー対応（優先1）: EventBridge Scheduler は既定で最大24時間・185回
+    リトライするため、scheduled_time が正しいUTCでも壁時計が7時間以上進む
+    （＝長時間リトライされた）ケースが現実に起こりうる。以前の修正は乖離量
+    （7時間超）で判定していたため、これを「タイムゾーン誤り」と誤検出して
+    壁時計にフォールバックし、翌朝にその晩のIDEM#NIGHTキーを先食みしていた
+    （本来22:30に届くはずのメッセージが無言消滅する退行）。
+    scheduled_time自体の形（数字がcronの予定時刻と一致するか）で判定する
+    ように直したので、長時間リトライでは scheduled_time を信頼し続ける。
+    """
+    calls = _patch_night_dependencies(monkeypatch)
+    monkeypatch.setattr(
+        nh.hd,
+        "jst_now",
+        # 22:30起動から7時間半後に成功したのを模す（長時間リトライ）。
+        lambda: datetime(2026, 8, 27, 6, 0, tzinfo=JST),
+    )
+
+    result = nh.handler({"scheduled_time": "2026-08-26T13:30:00Z"})
+
+    assert result == {"ok": True}
+    assert calls == [("2026-08-26", 22.5, "deps")]
+
+
 def test_night_handler_uses_wall_clock_for_manual_fallback(monkeypatch):
     calls = _patch_night_dependencies(monkeypatch)
     monkeypatch.setattr(
@@ -185,6 +210,109 @@ def test_night_handler_rejects_unknown_keys_and_non_mapping_events(monkeypatch, 
 
     assert result["statusCode"] == 400
     assert calls == []
+
+
+def _patch_morning_dependencies(monkeypatch):
+    settings = _Settings()
+    calls = []
+    monkeypatch.setattr(mh, "load_settings", lambda: settings)
+    monkeypatch.setattr(mh.hd, "build_morning_deps", lambda actual: "deps")
+    monkeypatch.setattr(mh, "run_morning", lambda date, deps: calls.append((date, deps)) or {"ok": True})
+    return calls
+
+
+def test_morning_handler_derives_date_from_scheduled_time(monkeypatch):
+    """最終レビュー対応（優先2）: scheduled_time から起点日を導く（前日日付）。"""
+    calls = _patch_morning_dependencies(monkeypatch)
+    monkeypatch.setattr(mh.hd, "jst_now", lambda: datetime(2026, 8, 27, 8, 1, tzinfo=JST))
+
+    result = mh.handler({"scheduled_time": "2026-08-26T23:00:00Z"})  # = 08-27 08:00 JST
+
+    assert result == {"ok": True}
+    assert calls == [("2026-08-26", "deps")]
+
+
+def test_morning_handler_survives_overnight_retry_using_scheduled_time(monkeypatch):
+    """最終レビュー対応（優先2）: 8:00起動が失敗し続けて翌00:30に成功しても、
+    scheduled_time由来の起点日は08-26のまま（壁時計は使わない）。
+    以前はhd.jst_now()（壁時計）だけから起点日を導いており、この場合
+    date='2026-08-27'（1日ずれ）になり、08-26の朝が永久欠落した上に
+    IDEM#MORNING/2026-08-27 を先食いして翌朝も欠落する2日分消失があった。
+    """
+    calls = _patch_morning_dependencies(monkeypatch)
+    monkeypatch.setattr(
+        mh.hd, "jst_now",
+        lambda: datetime(2026, 8, 27, 0, 30, tzinfo=JST),  # 日跨ぎ長時間リトライ後
+    )
+
+    result = mh.handler({"scheduled_time": "2026-08-26T23:00:00Z"})  # = 08-27 08:00 JST
+
+    assert result == {"ok": True}
+    assert calls == [("2026-08-26", "deps")]
+
+
+def test_morning_handler_falls_back_to_wall_clock_when_scheduled_time_looks_locally_labeled(monkeypatch):
+    """scheduled_time がローカル時刻に誤ってZ(UTC)を付けて返ってきたケース。"""
+    calls = _patch_morning_dependencies(monkeypatch)
+    monkeypatch.setattr(mh.hd, "jst_now", lambda: datetime(2026, 8, 27, 8, 1, tzinfo=JST))
+
+    result = mh.handler({"scheduled_time": "2026-08-27T08:00:00Z"})  # 数字がそのままJST8:00と一致
+
+    assert result == {"ok": True}
+    assert calls == [("2026-08-26", "deps")]
+
+
+def test_morning_handler_uses_wall_clock_for_manual_fallback(monkeypatch):
+    calls = _patch_morning_dependencies(monkeypatch)
+    monkeypatch.setattr(mh.hd, "jst_now", lambda: datetime(2026, 8, 27, 8, 0, tzinfo=JST))
+
+    mh.handler({})
+
+    assert calls == [("2026-08-26", "deps")]
+
+
+def test_morning_handler_accepts_explicit_date_override(monkeypatch):
+    calls = _patch_morning_dependencies(monkeypatch)
+
+    mh.handler({"date": "2026-08-20"})
+
+    assert calls == [("2026-08-20", "deps")]
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"scheduled_time": "2026-08-26T23:00:00Z", "date": "2026-08-26"},
+        {"scheduled_time": 123},
+        {"scheduled_time": "not-an-iso-time"},
+        {"date": 123},
+        {"date": "not-a-date"},
+    ],
+)
+def test_morning_handler_rejects_invalid_or_mixed_input(monkeypatch, event):
+    calls = _patch_morning_dependencies(monkeypatch)
+
+    result = mh.handler(event)
+
+    assert result["statusCode"] == 400
+    assert calls == []
+
+
+def test_morning_handler_passes_lambda_deadline_to_dependencies(monkeypatch):
+    _patch_morning_dependencies(monkeypatch)
+    deadline = object()
+    monkeypatch.setattr(mh.hd, "deadline_from_context", lambda context: deadline)
+    captured = {}
+    monkeypatch.setattr(mh.hd, "build_morning_deps",
+                        lambda settings, actual: captured.setdefault("deadline", actual) or "deps")
+
+    class Context:
+        def get_remaining_time_in_millis(self):
+            return 60000
+
+    mh.handler({}, Context())
+
+    assert captured["deadline"] is deadline
 
 
 def _webhook_event(events):

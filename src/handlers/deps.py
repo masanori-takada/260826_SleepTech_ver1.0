@@ -59,10 +59,66 @@ def now_h(now: datetime, night: bool = False) -> float:
     return round(now.hour + now.minute / 60.0, 4)
 
 
+def resolve_scheduled_time(
+    value, cron_hour: int, cron_minute: int
+) -> tuple[datetime, bool] | None:
+    """EventBridge Scheduler の ``<aws.scheduler.scheduled-time>`` 文字列を解決する。
+
+    戻り値は (JSTへ正しく変換した瞬時, ローカル時刻へのZ誤ラベル疑いフラグ)。
+    パース不能（文字列でない・ISO形式でない・タイムゾーン情報が無い）場合は None。
+
+    最終レビュー対応: 前回の修正は「壁時計との乖離が7時間を超えたら
+    タイムゾーン誤りとみなして壁時計にフォールバックする」という対称な
+    閾値判定だったが、EventBridge Scheduler はRetryPolicy未指定だと既定で
+    最大24時間・185回リトライするため、7時間超の乖離は「タイムゾーン誤り」
+    ではなく「正規の長時間リトライ」でも普通に起こり得る。これを掴んで
+    scheduled_timeを誤って捨てると、本来22:30に届くはずの夜メッセージが
+    翌朝の壁時計時刻を起点日にしてしまい、その晩のIDEM#NIGHTキーを
+    先食いして本来のメッセージが無言消滅する退行を招いた。
+
+    そこで判定基準を「壁時計との乖離量」ではなく「scheduled_time自体の形」に
+    変更する。タイムゾーン表記がUTC（Z / +00:00）であり、かつその数字を
+    そのままJST時刻とみなすとcronの予定時刻（夜22:30・朝8:00）と厳密に
+    一致する場合だけ、「ローカル時刻に誤ってZを付けて返してきた」疑いあり
+    と判定する。scheduled_timeは常にcronの予定時刻そのものであり
+    （実行が遅延してもscheduled_timeの値自体は変わらない）、この判定は
+    壁時計にも乖離量にも依存しないため、リトライがどれだけ長時間・
+    大量に発生しても誤検出しない。
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    scheduled = parsed.astimezone(JST)
+    naive_as_jst = parsed.replace(tzinfo=JST)
+    mislabeled = (
+        parsed.utcoffset() == timedelta(0)
+        and naive_as_jst.hour == cron_hour
+        and naive_as_jst.minute == cron_minute
+    )
+    return scheduled, mislabeled
+
+
+# M4対応: boto3 の既定タイムアウト（connect/read 各60秒）は60秒Lambdaに対して
+# 未拘束（1回のAPI呼び出しだけでタイムアウト予算を使い切りかねない）。
+# connect/read を短く切り、リトライ回数も絞る。
+_BOTO_CONFIG_KW = {"connect_timeout": 2, "read_timeout": 3, "retries": {"max_attempts": 2}}
+
+
+def _boto_config():
+    from botocore.config import Config
+
+    return Config(**_BOTO_CONFIG_KW)
+
+
 def _secret(name: str, region: str) -> dict:
     import boto3
 
-    sm = boto3.client("secretsmanager", region_name=region)
+    sm = boto3.client("secretsmanager", region_name=region, config=_boto_config())
     return json.loads(sm.get_secret_value(SecretId=name)["SecretString"])
 
 

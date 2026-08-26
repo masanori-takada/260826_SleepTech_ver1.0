@@ -61,5 +61,6 @@ def _default_token_poster(url: str, form: dict) -> dict:
     req = urllib.request.Request(
         url, data=data, headers={"Content-Type": "application/x-www-form-urlencoded"}
     )
-    with urllib.request.urlopen(req, timeout=15) as r:  # noqa: S310 — 固定の Google 端点
+    # M4対応: 60秒Lambdaに対して15秒は長すぎる（他の処理の時間予算を圧迫する）ため5秒に短縮。
+    with urllib.request.urlopen(req, timeout=5) as r:  # noqa: S310 — 固定の Google 端点
         return json.loads(r.read().decode("utf-8"))

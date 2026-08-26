@@ -13,8 +13,13 @@ from typing import Any
 
 import boto3
 from boto3.dynamodb.conditions import Attr, Key
+from botocore.config import Config
 
 DEFAULT_VITAL_TTL_DAYS = 365
+
+# M4対応: boto3 既定の connect/read タイムアウト（各60秒）は60秒Lambdaに対して
+# 未拘束なので短く切る。DynamoDBはリトライ前提で使うため max_attempts も絞る。
+_BOTO_CONFIG = Config(connect_timeout=2, read_timeout=3, retries={"max_attempts": 2})
 
 
 class DynamoBackend:
@@ -23,7 +28,9 @@ class DynamoBackend:
     def __init__(
         self, table_name: str, region: str, vital_ttl_days: int = DEFAULT_VITAL_TTL_DAYS
     ) -> None:
-        self._table = boto3.resource("dynamodb", region_name=region).Table(table_name)
+        self._table = boto3.resource(
+            "dynamodb", region_name=region, config=_BOTO_CONFIG
+        ).Table(table_name)
         self._vital_ttl_days = vital_ttl_days
 
     @property
@@ -37,13 +44,19 @@ class DynamoBackend:
         ``status`` / ``lease_until`` は claim/complete の ConditionExpression が
         トップレベル属性として参照するため、``json`` 本体に加えてトップレベルにも
         同じ値をミラーする。``get()`` は引き続き ``json`` を読むので互換性は保たれる。
+
+        M3対応: このミラーは冪等エンティティ（pk="IDEM#..."）の claim/complete
+        条件式が読む属性としてのみ必要。以前は value に "status" キーがあれば
+        無条件でミラーしていたため、Prediction.status（"ok"/"too_late"/…）まで
+        PREDICT#* 項目のトップレベルに漏れていた。pk が "IDEM#" 始まりのときに
+        限定する。
         """
         item: dict[str, Any] = {
             "pk": pk,
             "sk": sk,
             "json": json.dumps(value, ensure_ascii=False, default=str),
         }
-        if "status" in value:
+        if pk.startswith("IDEM#") and "status" in value:
             item["status"] = value["status"]
         if "lease_until" in value:
             # DynamoDB の Table リソースは float を受け付けないため Decimal に変換する

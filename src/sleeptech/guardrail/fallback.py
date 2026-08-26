@@ -17,16 +17,26 @@ def night_text(advice, baseline, debt_h: float) -> str:
 
     if debt_h > 0.5:
         lines.append(f"睡眠負債が{debt_h:.1f}時間分たまっています。")
-    if advice.status == "too_late":
+    # M1対応: 0%判定をstatus分岐より先に評価する。以前はtoo_late/unreachable
+    # 分岐が先に評価され、0%（mean_drop_pct=0）でもそれらのステータスなら
+    # 素の "-{0}%" が出て「ベスト比 -0% 程度の見込みです」という不自然な
+    # 表記が残っていた（I4対応はokの分岐にしか及んでいなかった）。
+    if advice.mean_drop_pct == 0:
+        if advice.status == "too_late":
+            lines.append(f"今すぐ寝てください（{time_s}）。")
+            lines.append("それでも明日はベストに近い一日になりそうです。")
+        elif advice.status == "unreachable":
+            lines.append("今夜は何時に寝てもベストに近い一日になりそうです。")
+            lines.append(f"できるだけ早めに、遅くとも{time_s}には横になってください。")
+        else:
+            lines.append(f"▶ 今夜は {time_s} までに就寝")
+            lines.append("今夜の目安どおりに寝られれば、明日はベストに近い一日になりそうです。")
+    elif advice.status == "too_late":
         lines.append(f"今すぐ寝てください（{time_s}）。")
         lines.append(f"それでも明日はベスト比 -{advice.mean_drop_pct}% 程度の見込みです。")
     elif advice.status == "unreachable":
         lines.append(f"今夜は何時に寝てもベスト比 -{advice.mean_drop_pct}% 程度の見込みです。")
         lines.append(f"できるだけ早めに、遅くとも{time_s}には横になってください。")
-    elif advice.mean_drop_pct == 0:
-        # I4対応: 平常どおり眠れる晩は「-0%」という不自然な表記を避け、専用の文面にする。
-        lines.append(f"▶ 今夜は {time_s} までに就寝")
-        lines.append("今夜の目安どおりに寝られれば、明日はベストに近い一日になりそうです。")
     else:
         lines.append(f"▶ 今夜は {time_s} までに就寝")
         lines.append(f"守れれば明日は一日ベスト比 -{advice.mean_drop_pct}% 以内の見込みです。")

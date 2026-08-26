@@ -17,8 +17,6 @@ class Settings:
     secret_line: str
     secret_openai: str
     llm_model: str
-    night_hour_jst: int
-    morning_hour_jst: int
     target_drop_pct: float
     override_wake_h: float | None
 
@@ -39,8 +37,6 @@ def load_settings() -> Settings:
         secret_openai=os.getenv("STC_SECRET_OPENAI", "sleeptech/openai"),
         # 実機で変更が必要な場合は環境変数だけを差し替える。
         llm_model=os.getenv("LLM_MODEL", "gpt-5.6-luna"),
-        night_hour_jst=int(os.getenv("STC_NIGHT_HOUR_JST", "22")),
-        morning_hour_jst=int(os.getenv("STC_MORNING_HOUR_JST", "8")),
         target_drop_pct=float(os.getenv("STC_TARGET_DROP_PCT", "10")),
         override_wake_h=_env_float_or_none("STC_OVERRIDE_WAKE_H"),
     )

@@ -52,6 +52,22 @@ def test_night_text_changes_for_too_late_status():
     assert "今すぐ" in fallback.night_text(too_late, BASE, debt_h=5.0)
 
 
+def test_night_text_too_late_with_zero_drop_avoids_minus_zero_percent():
+    """M1: too_late でも mean_drop_pct=0 なら「-0%」を出さない。"""
+    too_late_zero = BedtimeAdvice(bedtime_h=31.0, mean_drop_pct=0, curve=CURVE, status="too_late")
+    text = fallback.night_text(too_late_zero, BASE, debt_h=3.5)
+    assert "-0%" not in text
+    assert "今すぐ" in text
+
+
+def test_night_text_unreachable_with_zero_drop_avoids_minus_zero_percent():
+    """M1: unreachable でも mean_drop_pct=0 なら「-0%」を出さない。"""
+    unreachable_zero = BedtimeAdvice(bedtime_h=27.5, mean_drop_pct=0, curve=CURVE, status="unreachable")
+    text = fallback.night_text(unreachable_zero, BASE, debt_h=3.5)
+    assert "-0%" not in text
+    assert "何時に寝ても" in text
+
+
 def test_night_text_uses_day_prefix_for_next_day_bedtime():
     advice = BedtimeAdvice(bedtime_h=24.5, mean_drop_pct=8, curve=CURVE, status="ok")
     assert "翌 0:30" in fallback.night_text(advice, BASE, debt_h=0.0)

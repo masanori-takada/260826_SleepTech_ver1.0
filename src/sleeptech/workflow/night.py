@@ -116,6 +116,10 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
         log.log("save_prediction_failed", error=str(exc))
 
     # I5対応: 仕様 第9節 MSG#NIGHT。本文・ガードレール結果・再生成回数・送信可否を記録する。
+    # M2対応: delivered=True は push() が例外を投げずに戻ってきたことをもって
+    # 「届いた」とみなしている。_push は push_client.push の例外を捕捉せず
+    # そのまま送出する（このファイル冒頭のコメントの通り）ため、ここに到達
+    # している時点で送信は成功済みであり、True は実態と一致する。
     _save_message(
         deps, date, SLOT, body,
         guardrail_passed=not used_fallback,
@@ -138,11 +142,18 @@ def _compose(deps, advice, baseline, debt_h, facts, log) -> tuple[str, bool, int
 
     戻り値の3つめは regen_count（ガードレール不通過による再試行回数。
     最初の1回は含まない）。
+
+    M2対応: 以前はフォールバック時に常に deps.max_regen を返していたため、
+    LLM が初回で例外を投げてbreakした場合（実際には1回も再試行していない）
+    でも regen_count=2（max_regen）という不正確な値が記録されていた。
+    実際に試行した回数（attempts_made）から数える。
     """
     user = prompts.night_user(advice, baseline, debt_h)
+    attempts_made = 0
     for attempt in range(deps.max_regen + 1):
         if deps.deadline is not None and not deps.deadline.can_start():
             break
+        attempts_made = attempt + 1
         try:
             text = deps.llm_client.complete(prompts.NIGHT_SYSTEM, user)
         except Exception as exc:  # noqa: BLE001 — LLM 障害は必ずフォールバックへ
@@ -152,4 +163,4 @@ def _compose(deps, advice, baseline, debt_h, facts, log) -> tuple[str, bool, int
         if result.passed:
             return text, False, attempt
         log.log("guardrail_rejected", attempt=attempt, reason=result.reason)
-    return fallback.night_text(advice, baseline, debt_h), True, deps.max_regen
+    return fallback.night_text(advice, baseline, debt_h), True, max(attempts_made - 1, 0)

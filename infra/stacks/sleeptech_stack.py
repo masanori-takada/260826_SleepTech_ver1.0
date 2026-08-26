@@ -103,16 +103,24 @@ class SleepTechStack(Stack):
         # 探し回らずに済むよう、デプロイ出力に出す。
         CfnOutput(self, "WebhookFunctionUrl", value=webhook_url.url)
 
+        # 最終レビュー対応（優先2）: 両Scheduleに scheduled_time を渡し、朝ハンドラも
+        # 夜と同じ安全な起点日導出を使えるようにする（morning_handler.py参照）。
+        scheduled_time_input = json.dumps(
+            {"scheduled_time": "<aws.scheduler.scheduled-time>"},
+            separators=(",", ":"),
+        )
         self._schedule(
             "NightSchedule",
             "cron(30 22 * * ? *)",
             night_fn,
-            input_value=json.dumps(
-                {"scheduled_time": "<aws.scheduler.scheduled-time>"},
-                separators=(",", ":"),
-            ),
+            input_value=scheduled_time_input,
         )
-        self._schedule("MorningSchedule", "cron(0 8 * * ? *)", morning_fn)
+        self._schedule(
+            "MorningSchedule",
+            "cron(0 8 * * ? *)",
+            morning_fn,
+            input_value=scheduled_time_input,
+        )
 
     def _function(
         self, name: str, handler: str, environment: dict[str, str]
@@ -148,6 +156,13 @@ class SleepTechStack(Stack):
             arn=function.function_arn,
             role_arn=role.role_arn,
             input=input_value,
+            # 最終レビュー対応（優先2）: RetryPolicy未指定だと既定で最大24時間・185回
+            # リトライされ、日跨ぎリトライ（起点日のずれ・IDEM先食い）を招きうる。
+            # 明示的に短く絞る。
+            retry_policy=scheduler.CfnSchedule.RetryPolicyProperty(
+                maximum_event_age_in_seconds=3600,
+                maximum_retry_attempts=5,
+            ),
         )
         scheduler.CfnSchedule(
             self,

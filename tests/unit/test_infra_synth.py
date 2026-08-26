@@ -107,14 +107,29 @@ def test_night_schedule_has_scheduled_time_input(template):
     )
 
 
-def test_morning_schedule_has_no_input(template):
+def test_morning_schedule_also_has_scheduled_time_input(template):
+    """最終レビュー対応（優先2）: 朝ハンドラも scheduled_time から安全に起点日を
+    導けるよう、MorningScheduleにも夜と同じ input を渡す。"""
     resources = template.find_resources("AWS::Scheduler::Schedule")
     morning = next(
         resource
         for resource in resources.values()
         if resource["Properties"]["ScheduleExpression"] == "cron(0 8 * * ? *)"
     )
-    assert "Input" not in morning["Properties"]["Target"]
+    assert morning["Properties"]["Target"]["Input"] == (
+        '{"scheduled_time":"<aws.scheduler.scheduled-time>"}'
+    )
+
+
+def test_both_schedules_have_a_retry_policy(template):
+    """最終レビュー対応（優先2）: RetryPolicy未指定だと既定で最大24時間・185回
+    リトライされ、日跨ぎリトライ（起点日のずれ・IDEM先食い）を招きうる。"""
+    resources = template.find_resources("AWS::Scheduler::Schedule")
+    assert len(resources) == 2
+    for resource in resources.values():
+        retry_policy = resource["Properties"]["Target"]["RetryPolicy"]
+        assert retry_policy["MaximumEventAgeInSeconds"] == 3600
+        assert 1 <= retry_policy["MaximumRetryAttempts"] <= 5
 
 
 def test_lambdas_are_python312_with_expected_handlers(template):

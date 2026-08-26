@@ -66,6 +66,8 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
         raw = deps.health_source.fetch_raw(wake_date)
     except ConsentRevokedError as exc:
         log.log("consent_revoked", error=str(exc))
+        # M2対応: _push は push_client.push の例外を捕捉せず送出するため、
+        # ここに到達している時点で送信は成功済み。delivered=True は実態と一致する。
         _push(deps, build_message(_CONSENT_TEXT, with_feedback=False), _retry_key(date, SLOT))
         _mark_notified(deps, date, log)
         _save_message(
@@ -86,6 +88,8 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
 
     # 睡眠データが取れていなければ予測 % を一切出さない（推測で数字を出さない）
     if not vital.has_sleep:
+        # M2対応: _push は push_client.push の例外を捕捉せず送出するため、
+        # ここに到達している時点で送信は成功済み。delivered=True は実態と一致する。
         _push(deps, build_message(_NO_DATA_TEXT, with_feedback=False), _retry_key(date, SLOT))
         _mark_notified(deps, date, log)
         _save_message(
@@ -160,6 +164,10 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
         log.log("save_prediction_failed", error=str(exc))
 
     # I5対応: 仕様 第9節 MSG#MORNING。本文・ガードレール結果・再生成回数・送信可否を記録する。
+    # M2対応: delivered=True は push() が例外を投げずに戻ってきたことをもって
+    # 「届いた」とみなしている。_push は push_client.push の例外を捕捉せず
+    # そのまま送出するため、ここに到達している時点で送信は成功済みであり、
+    # True は実態と一致する。
     _save_message(
         deps, date, SLOT, body,
         guardrail_passed=not used_fallback,
@@ -195,11 +203,18 @@ def _compose(deps, curve, plan, vital, facts, log) -> tuple[str, bool, int]:
 
     戻り値の3つめは regen_count（ガードレール不通過による再試行回数。
     最初の1回は含まない）。
+
+    M2対応: 以前はフォールバック時に常に deps.max_regen を返していたため、
+    LLM が初回で例外を投げてbreakした場合（実際には1回も再試行していない）
+    でも regen_count=2（max_regen）という不正確な値が記録されていた。
+    実際に試行した回数（attempts_made）から数える。
     """
     user = prompts.morning_user(curve, plan, vital)
+    attempts_made = 0
     for attempt in range(deps.max_regen + 1):
         if deps.deadline is not None and not deps.deadline.can_start():
             break
+        attempts_made = attempt + 1
         try:
             text = deps.llm_client.complete(prompts.MORNING_SYSTEM, user)
         except Exception as exc:  # noqa: BLE001 — LLM 障害は必ずフォールバックへ
@@ -209,4 +224,4 @@ def _compose(deps, curve, plan, vital, facts, log) -> tuple[str, bool, int]:
         if result.passed:
             return text, False, attempt
         log.log("guardrail_rejected", attempt=attempt, reason=result.reason)
-    return fallback.morning_text(curve, plan, vital), True, deps.max_regen
+    return fallback.morning_text(curve, plan, vital), True, max(attempts_made - 1, 0)

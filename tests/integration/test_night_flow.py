@@ -289,6 +289,36 @@ def test_normal_night_llm_success_path_still_passes_with_nonzero_drop():
     assert result["used_fallback"] is False
 
 
+# --- 最終レビュー最終波: LLM成功経路（used_fallback=False）の網羅確認 ---
+# M1（fallback.night_text の0%判定順序）とnight_handlerの再解釈ロジック変更が
+# LLM成功経路（テンプレートに落ちない経路）を壊していないことを確認する。
+
+
+def test_too_late_night_llm_success_path_still_passes():
+    """夜・too_late のLLM成功経路（used_fallback=False）が通ること。
+
+    limit_h = wake_h(31.0) - MIN_SLEEP_BEFORE_WAKE_H(4.0) = 27.0。
+    now_h=28.0 は既に探索区間の終端を過ぎているため status="too_late" になる。
+    """
+    push = FakePushClient()
+    memory = _memory()
+    result = night.run_night(DATE, 28.0, _deps(memory=memory, llm=StubLlm(), push=push))
+    assert result["used_fallback"] is False
+    pred = memory.get_prediction(DATE, "NIGHT")
+    assert pred.status == "too_late"
+
+
+def test_day_crossing_bedtime_night_llm_success_path_still_passes():
+    """夜・日跨ぎ就寝（bedtime_h>=24、本文の時刻表記に「翌」が付く）のLLM成功経路が
+    通ること（night.run_night の require_day_prefix=True の照合込み）。
+    """
+    push = FakePushClient()
+    memory = _memory()
+    result = night.run_night(DATE, 24.5, _deps(memory=memory, llm=StubLlm(), push=push))
+    assert result["used_fallback"] is False
+    assert result["bedtime_h"] >= 24.0
+
+
 # --- I5: MSG#NIGHT の保存 ---
 
 
