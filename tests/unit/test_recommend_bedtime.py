@@ -1,5 +1,7 @@
 """推奨就寝時刻の探索と3つの境界ケース（仕様 第5節「推奨就寝時刻の解法」）。"""
 
+import math
+
 from sleeptech.memory.schemas import Baseline
 from sleeptech.model import constants as C
 from sleeptech.model import two_process as tp
@@ -71,3 +73,13 @@ def test_scan_is_deterministic():
     a = tp.recommend_bedtime(now_h=22.5, baseline=BASE, debt_h=1.5)
     b = tp.recommend_bedtime(now_h=22.5, baseline=BASE, debt_h=1.5)
     assert a == b
+
+
+def test_unreachable_mean_drop_is_published_conservatively():
+    """閾値直上の未丸め平均は、公開値を切り上げて status と整合させる。"""
+    got = tp.recommend_bedtime(now_h=24.9, baseline=BASE, debt_h=0.15)
+    raw_mean = tp.mean_drop_in_main_window(got.curve, BASE.wake_h)
+
+    assert got.status == "unreachable"
+    assert raw_mean > C.TARGET_DROP_PCT
+    assert got.mean_drop_pct == math.ceil(raw_mean)

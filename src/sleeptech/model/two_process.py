@@ -183,7 +183,7 @@ def recommend_bedtime(
     # 既に探索区間の終端を過ぎている → 今すぐ寝るべき
     if now_h >= limit_h:
         curve, mean = _evaluate(now_h)
-        return BedtimeAdvice(now_h, round(mean), curve, "too_late")
+        return BedtimeAdvice(now_h, math.ceil(mean), curve, "too_late")
 
     step_h = C.SCAN_STEP_MIN / 60.0
     span_h = limit_h - now_h
@@ -201,8 +201,8 @@ def recommend_bedtime(
     if passing:
         eligible = [c for c in passing if c[0] <= comfortable_h] or passing
         best = max(eligible, key=lambda c: c[0])
-        return BedtimeAdvice(round(best[0], 3), round(best[1]), best[2], "ok")
+        return BedtimeAdvice(round(best[0], 3), math.ceil(best[1]), best[2], "ok")
 
     # 閾値に届かない → 低下率が最小の時刻を返す
     best = min(candidates, key=lambda c: (c[1], c[0]))
-    return BedtimeAdvice(round(best[0], 3), round(best[1]), best[2], "unreachable")
+    return BedtimeAdvice(round(best[0], 3), math.ceil(best[1]), best[2], "unreachable")
