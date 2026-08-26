@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import math
+
 _DAY_PREFIX = ("", "翌 ", "翌々 ")
 
 
@@ -15,8 +17,8 @@ def to_h(hour: int, minute: int = 0, next_day: bool = False) -> float:
 
 
 def _split(t_h: float) -> tuple[int, int, int]:
-    """経過時間を (日数, 時, 分) に分解する。分は四捨五入。"""
-    total_min = int(round(t_h * 60.0))
+    """経過時間を (日数, 時, 分) に分解する。分はhalf-upで丸める。"""
+    total_min = math.floor(t_h * 60.0 + 0.5)
     days, rem = divmod(total_min, 24 * 60)
     hour, minute = divmod(rem, 60)
     return days, hour, minute

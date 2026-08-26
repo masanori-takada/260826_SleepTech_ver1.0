@@ -41,3 +41,16 @@ def test_to_h_round_trip():
 
 def test_minutes_are_rounded_to_the_nearest_minute():
     assert timefmt.fmt_hm(23.0 + 29.6 / 60.0) == "23:30"
+
+
+@pytest.mark.parametrize(
+    "value,want",
+    [
+        (2.5 / 60.0, "0:03"),
+        (3.5 / 60.0, "0:04"),
+        (23.0 + 59.5 / 60.0, "翌 0:00"),
+    ],
+)
+def test_half_minute_rounds_up(value, want):
+    """30秒ちょうどは常に次の分へ切り上げる。"""
+    assert timefmt.fmt_hm(value) == want
