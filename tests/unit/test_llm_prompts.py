@@ -7,9 +7,97 @@ validator.validate() を通ることを確認する。ここが壊れると本�
 
 from __future__ import annotations
 
+import re
+
 from sleeptech.guardrail.validator import Facts, validate
+from sleeptech.llm.prompts import (
+    MORNING_SYSTEM,
+    NIGHT_SYSTEM,
+    morning_user,
+    night_user,
+)
+from sleeptech.memory.schemas import (
+    Baseline,
+    BedtimeAdvice,
+    DailyVital,
+    HourlyDrop,
+    RecoveryPlan,
+)
 
 _NOTE = "（あなたの平常時を100%とした推定の目安）"
+
+# validator.py の禁止パターンをテスト側で複製したもの（非公開名は import しない）。
+# validator.py を変更した場合はここも合わせて更新すること。
+_FEAR_WORDS = re.compile(r"取り返しがつかない|寿命が縮|手遅れ|命に関わ|危険な状態")
+_MEDICAL_WORDS = re.compile(
+    r"診断(?:できます|します|です)|(?:不眠症|睡眠時無呼吸症候群|病気)です|"
+    r"(?:治療|処方)(?:のために|してください|が必要|を受けて|指示)"
+)
+_ATTACK_WORDS = re.compile(
+    r"だらしない|意志が弱い|情けない|怠惰|ダメな人|無能|クズ|ゴミ|バカ|死ね|人間失格|"
+    r"くたばれ|消えろ|生きる価値(?:が)?ない|一生治らない|デブ|気持ち悪い|アホ"
+)
+
+
+def _assert_no_forbidden_words(text: str) -> None:
+    assert not _FEAR_WORDS.search(text), f"恐怖を煽る禁止語を含む: {text!r}"
+    assert not _MEDICAL_WORDS.search(text), f"医療断定の禁止語を含む: {text!r}"
+    assert not _ATTACK_WORDS.search(text), f"人格否定の禁止語を含む: {text!r}"
+
+
+def _baseline(is_default: bool = False) -> Baseline:
+    return Baseline(wake_h=7.0, sleep_h=23.0, days_used=14, is_default=is_default)
+
+
+def _advice(status: str, bedtime_h: float = 23.5) -> BedtimeAdvice:
+    return BedtimeAdvice(
+        bedtime_h=bedtime_h,
+        mean_drop_pct=12,
+        curve=[HourlyDrop(hour=14, focus_pct=15, mood_pct=10)],
+        status=status,
+    )
+
+
+def test_night_user_all_statuses_have_no_forbidden_words():
+    """night_user() が生成する固定文言（status_note を含む）に禁止語がない。"""
+    for status in ("ok", "unreachable", "too_late"):
+        text = night_user(_advice(status), _baseline(), debt_h=2.0)
+        _assert_no_forbidden_words(text)
+
+
+def test_night_user_default_baseline_note_has_no_forbidden_words():
+    """履歴不足の注意書きを含む場合も禁止語がない。"""
+    text = night_user(_advice("ok"), _baseline(is_default=True), debt_h=1.0)
+    _assert_no_forbidden_words(text)
+
+
+def test_morning_user_with_and_without_caffeine_has_no_forbidden_words():
+    """morning_user() のカフェインあり／なし両方の文言に禁止語がない。"""
+    curve = [HourlyDrop(hour=14, focus_pct=15, mood_pct=10)]
+    vital = DailyVital(date="2026-08-26", total_sleep_min=390, deep_sleep_min=60, awakenings=1)
+
+    with_caffeine = RecoveryPlan(
+        caffeine_times_h=[13.0],
+        caffeine_cutoff_h=14.0,
+        light_morning_h=7.5,
+        light_avoid_after_h=21.0,
+    )
+    without_caffeine = RecoveryPlan(
+        caffeine_times_h=[],
+        caffeine_cutoff_h=14.0,
+        light_morning_h=7.5,
+        light_avoid_after_h=21.0,
+    )
+
+    for plan in (with_caffeine, without_caffeine):
+        text = morning_user(curve, plan, vital)
+        _assert_no_forbidden_words(text)
+
+
+def test_system_prompts_have_no_forbidden_words():
+    """NIGHT_SYSTEM / MORNING_SYSTEM（共通ルール含む）に禁止語がない。"""
+    _assert_no_forbidden_words(NIGHT_SYSTEM)
+    _assert_no_forbidden_words(MORNING_SYSTEM)
 
 
 def test_night_flow_normal_bedtime_passes():
@@ -61,6 +149,21 @@ def test_morning_flow_multiple_hours_passes():
         allowed_percents=[15, 10, 20, 14],
         allowed_times=[13.0, 21.0],
     )
+    result = validate(text, facts)
+    assert result.passed is True, result.reason
+
+
+def test_night_flow_too_late_next_day_bedtime_passes():
+    """夜フロー・status=too_late・bedtime_h >= 24.0 の指示に従った文面が通る。
+
+    修正前は status_note に禁止語「手遅れ」が含まれており、この指示に
+    素直に従った文面は reason="fear" で弾かれていた（Task 10 再レビュー指摘）。
+    """
+    text = (
+        "翌 0:30が今日の目標達成が難しい時間帯です。とにかく今すぐ横になってください。"
+        f"低下率の目安{_NOTE}は-12%です。"
+    )
+    facts = Facts(times=[24.5], percents=[12], require_day_prefix=True)
     result = validate(text, facts)
     assert result.passed is True, result.reason
 
