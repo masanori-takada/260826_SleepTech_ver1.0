@@ -19,6 +19,7 @@ Google Health API（Fitbit Web API の次世代、S2S向け）から前夜のバ
 from __future__ import annotations
 
 import urllib.parse
+import time
 from typing import Callable
 
 from sleeptech.collectors import ConsentRevokedError
@@ -44,6 +45,8 @@ _LIST_MAP: dict[str, tuple[str, str, str]] = {
 
 # sleep は専用スコープが必要。スコープ未付与なら 403 → None（FR-015 で許容）。
 _SLEEP_TYPE = "sleep"
+MAX_LIST_PAGES = 4
+LIST_TIME_BUDGET_SEC = 8.0
 
 
 class GoogleHealthApiSource:
@@ -54,10 +57,16 @@ class GoogleHealthApiSource:
         access_token_provider: Callable[[], str],
         http_post: Callable[[str, dict, dict], dict] | None = None,
         http_get: Callable[[str, dict], dict] | None = None,
+        clock: Callable[[], float] | None = None,
+        max_list_pages: int = MAX_LIST_PAGES,
+        list_time_budget_sec: float = LIST_TIME_BUDGET_SEC,
     ) -> None:
         self._token_provider = access_token_provider
         self._http_post = http_post or _default_http_post
         self._http_get = http_get or _default_http_get
+        self._clock = clock or time.monotonic
+        self._max_list_pages = max(1, max_list_pages)
+        self._list_time_budget_sec = max(0.1, list_time_budget_sec)
 
     def fetch_raw(self, date: str) -> dict:
         """指定日のバイタルを生 dict（キー=VITAL_FIELDS 互換）で返す。"""
@@ -107,10 +116,14 @@ class GoogleHealthApiSource:
         """
         vals = []
         next_token = None
-        while True:
+        started = self._clock()
+        for _page in range(self._max_list_pages):
+            if self._clock() - started >= self._list_time_budget_sec:
+                break
             params: dict = {"pageSize": 1000}
             if next_token:
                 params["pageToken"] = next_token
+            params["filter"] = _civil_sample_filter(date, type_id)
             url = f"{BASE_URL}/users/me/dataTypes/{type_id}/dataPoints?" + urllib.parse.urlencode(params)
             try:
                 resp = self._http_get(url, headers)
@@ -143,10 +156,14 @@ class GoogleHealthApiSource:
         }
         all_points: list = []
         next_token = None
-        while True:
-            params: dict = {"pageSize": 500}
+        started = self._clock()
+        for _page in range(self._max_list_pages):
+            if self._clock() - started >= self._list_time_budget_sec:
+                break
+            params: dict = {"pageSize": 25}
             if next_token:
                 params["pageToken"] = next_token
+            params["filter"] = _civil_end_filter(date)
             url = f"{BASE_URL}/users/me/dataTypes/{_SLEEP_TYPE}/dataPoints?" + urllib.parse.urlencode(params)
             try:
                 resp = self._http_get(url, headers)
@@ -193,11 +210,38 @@ def _pick_sleep_for_date(points: list, date: str):
     一致するものがなければ None（欠損扱い）。フォールバックで別日付のデータを
     返すと全日付に同一値が記録される誤りを防ぐ。
     """
+    candidates = []
     for p in points:
         interval = p.get("sleep", {}).get("interval", {})
-        if _local_date(interval.get("endTime"), interval.get("endUtcOffset")) == date:
-            return p
-    return None
+        sleep = p.get("sleep", {})
+        metadata = sleep.get("metadata") or {}
+        if _local_date(interval.get("endTime"), interval.get("endUtcOffset")) != date:
+            continue
+        if metadata.get("nap") is True:
+            continue
+        candidates.append(p)
+    if not candidates:
+        return None
+    def rank(point):
+        sleep = point.get("sleep", {})
+        metadata = sleep.get("metadata") or {}
+        interval = sleep.get("interval") or {}
+        main = metadata.get("main") is True or metadata.get("isMainSleep") is True
+        duration = _interval_minutes(interval.get("startTime"), interval.get("endTime"))
+        end = interval.get("endTime") or ""
+        return (main, duration if duration is not None else -1.0, end)
+    return max(candidates, key=rank)
+
+
+def _interval_minutes(start: str | None, end: str | None) -> float | None:
+    if not start or not end:
+        return None
+    try:
+        from datetime import datetime
+        return (datetime.fromisoformat(end.replace("Z", "+00:00")) -
+                datetime.fromisoformat(start.replace("Z", "+00:00"))).total_seconds() / 60
+    except (TypeError, ValueError):
+        return None
 
 
 def _derive_sleep_metrics(sleep_block: dict, wake_date: str) -> dict:
@@ -296,6 +340,20 @@ def _date_range(date: str) -> dict:
         "start": {"date": {"year": d.year, "month": d.month, "day": d.day}},
         "end": {"date": {"year": nxt.year, "month": nxt.month, "day": nxt.day}},
     }
+
+
+def _civil_sample_filter(date: str, type_id: str) -> str:
+    field = type_id.replace("-", "_") + ".sample_time.civil_time"
+    return f'{field} >= "{date}" AND {field} < "{_next_date(date)}"'
+
+
+def _civil_end_filter(date: str) -> str:
+    return f'sleep.interval.civil_end_time >= "{date}" AND sleep.interval.civil_end_time < "{_next_date(date)}"'
+
+
+def _next_date(date: str) -> str:
+    from datetime import date as date_cls, timedelta
+    return (date_cls.fromisoformat(date) + timedelta(days=1)).isoformat()
 
 
 def _point_date(civil_dt: dict | None) -> str | None:

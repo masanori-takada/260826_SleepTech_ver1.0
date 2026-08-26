@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timedelta, timezone
 
 JST = timezone(timedelta(hours=9))
@@ -72,11 +73,20 @@ def _memory(settings):
     return MemoryClient(DynamoBackend(settings.table, settings.region))
 
 
-def _llm(settings):
+def _llm(settings, deadline=None):
     from sleeptech.llm.client import OpenAiClient
 
     key = _secret(settings.secret_openai, settings.region).get("api_key", "")
-    return OpenAiClient(key, settings.llm_model)
+    return OpenAiClient(key, settings.llm_model, deadline=deadline)
+
+
+def deadline_from_context(context):
+    """Lambda contextの残り時間を単調時計の期限へ変換する。"""
+    remaining = getattr(context, "get_remaining_time_in_millis", None)
+    if not callable(remaining):
+        return None
+    from sleeptech.llm.client import ExecutionDeadline
+    return ExecutionDeadline(time.monotonic() + max(0, remaining()) / 1000.0)
 
 
 def _push(settings):
@@ -96,24 +106,26 @@ def _health_source(settings):
     return GoogleHealthApiSource(provider)
 
 
-def build_night_deps(settings):
+def build_night_deps(settings, deadline=None):
     from sleeptech.workflow.night import NightDeps
 
     return NightDeps(
         settings=settings,
         memory=_memory(settings),
-        llm_client=_llm(settings),
+        llm_client=_llm(settings, deadline),
         push_client=_push(settings),
+        deadline=deadline,
     )
 
 
-def build_morning_deps(settings):
+def build_morning_deps(settings, deadline=None):
     from sleeptech.workflow.morning import MorningDeps
 
     return MorningDeps(
         settings=settings,
         memory=_memory(settings),
         health_source=_health_source(settings),
-        llm_client=_llm(settings),
+        llm_client=_llm(settings, deadline),
         push_client=_push(settings),
+        deadline=deadline,
     )

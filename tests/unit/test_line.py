@@ -70,3 +70,16 @@ def test_fake_push_client_records_messages():
     c.push(line.build_message("B", with_feedback=True))
     assert len(c.sent) == 2
     assert c.sent[0]["text"] == "A"
+
+
+def test_push_client_uses_retry_key_on_every_request():
+    captured = {}
+
+    def fake_post(url, headers, body):
+        captured["headers"] = headers
+
+    c = line.LinePushClient("token", "U123", http_post=fake_post)
+    key = "12345678-1234-5678-1234-567812345678"
+    c.push(line.build_message("本文", with_feedback=False), retry_key=key)
+
+    assert captured["headers"]["X-Line-Retry-Key"] == key

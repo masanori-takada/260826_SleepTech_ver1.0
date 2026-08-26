@@ -8,6 +8,8 @@ LLM が落ちてもテンプレート文で数値は届く。
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import uuid
+import inspect
 
 from sleeptech.guardrail import fallback
 from sleeptech.guardrail import validator as gv
@@ -22,6 +24,17 @@ from sleeptech.observability import StructuredLogger
 SLOT = "NIGHT"
 
 
+def _retry_key(date: str, slot: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"sleeptech:{date}:{slot}"))
+
+
+def _push(deps, message: dict, retry_key: str) -> None:
+    if "retry_key" in inspect.signature(deps.push_client.push).parameters:
+        deps.push_client.push(message, retry_key=retry_key)
+    else:
+        deps.push_client.push(message)
+
+
 @dataclass
 class NightDeps:
     settings: object
@@ -29,6 +42,7 @@ class NightDeps:
     llm_client: object
     push_client: object
     max_regen: int = 2
+    deadline: object | None = None
 
 
 def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
@@ -36,7 +50,7 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
     log = StructuredLogger()
     log.log("night_start", date=date, now_h=now_h)
 
-    if deps.memory.is_notified(date, SLOT):
+    if deps.memory.is_notified(date, SLOT) or not deps.memory.claim_notification(date, SLOT):
         log.log("night_skipped", reason="already_notified")
         return {"delivered": False, "skipped": True}
 
@@ -72,7 +86,7 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
     # 自動リトライされる構成を前提とし、ここでは例外を握りつぶさず
     # そのまま上位へ伝播させることで「本当に届いた時だけ既読化する」
     # 冪等性を守る。
-    deps.push_client.push(build_message(body, with_feedback=True))
+    _push(deps, build_message(body, with_feedback=True), _retry_key(date, SLOT))
     log.log("night_sent", fallback=used_fallback)
 
     # push は成功済みなので、ここで失敗扱いにすると再試行で二重送信になる。
@@ -118,6 +132,8 @@ def _compose(deps, advice, baseline, debt_h, facts, log) -> tuple[str, bool]:
     """LLM で文章化し検証する。通らなければテンプレート文を返す。"""
     user = prompts.night_user(advice, baseline, debt_h)
     for attempt in range(deps.max_regen + 1):
+        if deps.deadline is not None and not deps.deadline.can_start():
+            break
         try:
             text = deps.llm_client.complete(prompts.NIGHT_SYSTEM, user)
         except Exception as exc:  # noqa: BLE001 — LLM 障害は必ずフォールバックへ

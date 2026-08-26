@@ -55,6 +55,30 @@ class DynamoBackend:
             return False
         return True
 
+    def claim(self, pk: str, sk: str, value: dict, now: float, lease_seconds: int) -> bool:
+        item = self._item(pk, sk, {**value, "status": "PENDING", "lease_until": now + lease_seconds})
+        try:
+            self._table.put_item(
+                Item=item,
+                ConditionExpression=Attr("pk").not_exists() | Attr("lease_until").lt(now),
+            )
+        except self._table.meta.client.exceptions.ConditionalCheckFailedException:
+            return False
+        return True
+
+    def complete(self, pk: str, sk: str) -> bool:
+        try:
+            self._table.update_item(
+                Key={"pk": pk, "sk": sk},
+                UpdateExpression="SET #status = :sent REMOVE lease_until",
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues={":sent": "SENT"},
+                ConditionExpression=Attr("status").eq("PENDING"),
+            )
+        except self._table.meta.client.exceptions.ConditionalCheckFailedException:
+            return self.put_conditional(pk, sk, {"status": "SENT"})
+        return True
+
     def get(self, pk: str, sk: str) -> dict | None:
         """指定キーの JSON 値を返す。"""
         item = self._table.get_item(Key={"pk": pk, "sk": sk}).get("Item")

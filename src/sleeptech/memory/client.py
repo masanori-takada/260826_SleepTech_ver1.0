@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date as date_cls
 from datetime import timedelta
+import time
 
 from sleeptech.memory.schemas import DailyVital, Feedback, Prediction
 
@@ -34,6 +35,24 @@ class InMemoryBackend:
         if (pk, sk) in self._items:
             return False
         self._items[(pk, sk)] = value
+        return True
+
+    def claim(self, pk: str, sk: str, value: dict, now: float, lease_seconds: int) -> bool:
+        current = self._items.get((pk, sk))
+        if current and current.get("status") == "SENT":
+            return False
+        if current and current.get("lease_until", 0) > now:
+            return False
+        self._items[(pk, sk)] = {**value, "status": "PENDING", "lease_until": now + lease_seconds}
+        return True
+
+    def complete(self, pk: str, sk: str) -> bool:
+        item = self._items.get((pk, sk))
+        if not item or item.get("status") == "SENT":
+            return False
+        item = {**item, "status": "SENT"}
+        item.pop("lease_until", None)
+        self._items[(pk, sk)] = item
         return True
 
     def get(self, pk: str, sk: str) -> dict | None:
@@ -90,12 +109,37 @@ class MemoryClient:
         return Feedback.from_dict(raw) if raw else None
 
     def is_notified(self, date: str, slot: str) -> bool:
-        return self._backend.get(_pk_idem(slot), date) is not None
+        item = self._backend.get(_pk_idem(slot), date)
+        return bool(item and item.get("status", "SENT") == "SENT")
+
+    def claim_notification(self, date: str, slot: str, now: float | None = None,
+                           lease_seconds: int = 90) -> bool:
+        now = time.time() if now is None else now
+        claim = getattr(self._backend, "claim", None)
+        if callable(claim):
+            return claim(_pk_idem(slot), date, {"date": date, "slot": slot}, now, lease_seconds)
+        return self._backend.put_conditional(
+            _pk_idem(slot), date, {"date": date, "slot": slot, "status": "PENDING",
+                                   "lease_until": now + lease_seconds}
+        )
 
     def mark_notified(self, date: str, slot: str) -> bool:
-        return self._backend.put_conditional(
-            _pk_idem(slot), date, {"date": date, "slot": slot}
-        )
+        complete = getattr(self._backend, "complete", None)
+        if callable(complete) and self._backend.__class__.__name__ == "DynamoBackend":
+            return complete(_pk_idem(slot), date)
+        item = self._backend.get(_pk_idem(slot), date)
+        if not item:
+            return self._backend.put_conditional(
+                _pk_idem(slot), date, {"date": date, "slot": slot, "status": "SENT"}
+            )
+        if callable(complete):
+            return complete(_pk_idem(slot), date)
+        if item.get("status") == "SENT":
+            return False
+        item = {**item, "status": "SENT"}
+        item.pop("lease_until", None)
+        self._backend.put(_pk_idem(slot), date, item)
+        return True
 
     def get_config(self) -> dict:
         return self._backend.get(PK_CONFIG, SK_META) or {}

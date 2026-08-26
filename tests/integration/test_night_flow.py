@@ -99,6 +99,18 @@ def test_second_run_does_not_send_again():
     assert len(push.sent) == 1
 
 
+def test_retry_key_is_stable_for_same_slot_and_differs_by_slot_or_date():
+    first = FakePushClient()
+    second = FakePushClient()
+    night.run_night(DATE, NOW_H, _deps(push=first))
+    night.run_night("2026-08-27", NOW_H, _deps(push=second))
+
+    assert first.retry_keys[0] == night._retry_key(DATE, "NIGHT")
+    assert first.retry_keys[0] != second.retry_keys[0]
+    assert first.retry_keys[0] == night._retry_key(DATE, "NIGHT")
+    assert first.retry_keys[0] != night._retry_key(DATE, "MORNING")
+
+
 def test_falls_back_to_template_when_llm_fails():
     """LLM 障害時もテンプレート文で送信し、クイックリプライも付く。"""
     push = FakePushClient()

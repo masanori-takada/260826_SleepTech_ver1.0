@@ -15,4 +15,7 @@ def handler(event, context=None) -> dict:
     event = event or {}
     settings = load_settings()
     date = event.get("date") or hd.origin_date(hd.jst_now(), morning=True)
-    return run_morning(date, hd.build_morning_deps(settings))
+    deadline = hd.deadline_from_context(context)
+    deps = (hd.build_morning_deps(settings, deadline) if deadline is not None
+            else hd.build_morning_deps(settings))
+    return run_morning(date, deps)

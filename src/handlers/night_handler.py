@@ -92,4 +92,7 @@ def handler(event, context=None) -> dict:
         now = hd.jst_now()
         date = hd.origin_date(now, night=True)
         current_h = hd.now_h(now, night=True)
-    return run_night(date, current_h, hd.build_night_deps(settings))
+    deadline = hd.deadline_from_context(context)
+    deps = (hd.build_night_deps(settings, deadline) if deadline is not None
+            else hd.build_night_deps(settings))
+    return run_night(date, current_h, deps)

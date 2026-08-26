@@ -97,3 +97,21 @@ def test_empty_content_raises_llm_error():
 def test_null_client_always_raises():
     with pytest.raises(llm.LlmError):
         llm.NullClient().complete("s", "u")
+
+
+def test_deadline_stops_retries_before_reserved_line_time():
+    clock = [100.0]
+    attempts = []
+
+    def fail(url, headers, body):
+        attempts.append(1)
+        clock[0] += 1.0
+        raise OSError("timeout")
+
+    deadline = llm.ExecutionDeadline(absolute=105.0, clock=lambda: clock[0], reserve_sec=2.0)
+    client = llm.OpenAiClient("sk", "gpt-x", http_post=fail, sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds), deadline=deadline)
+
+    with pytest.raises(llm.LlmError):
+        client.complete("s", "u")
+
+    assert len(attempts) < llm.MAX_ATTEMPTS

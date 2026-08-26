@@ -1,7 +1,12 @@
 """睡眠ステージの派生と日付変換（仕様 第4節「睡眠レコードから追加で取り出す項目」）。"""
 
 from sleeptech.collectors import vitals
-from sleeptech.collectors.google_health_api import _derive_sleep_metrics
+from sleeptech.collectors.google_health_api import (
+    GoogleHealthApiSource,
+    _derive_sleep_metrics,
+    _pick_sleep_for_date,
+)
+import urllib.parse
 
 
 def _stage(stage_type: str, start: str, end: str) -> dict:
@@ -30,6 +35,67 @@ def test_derives_rem_sleep_minutes():
     """REM ステージの合計を出す（転用元には無かった項目）。"""
     got = _derive_sleep_metrics(SLEEP_BLOCK, wake_date="2026-08-27")
     assert got["rem_sleep_min"] == 70
+
+
+def _sleep_point(end_hour: int, *, nap: bool = False, main: bool = False, duration: int = 8):
+    return {
+        "sleep": {
+            "interval": {
+                "startTime": f"2026-08-26T{24 - duration:02d}:00:00Z",
+                "endTime": f"2026-08-27T{end_hour:02d}:00:00Z",
+                "startUtcOffset": "32400s",
+                "endUtcOffset": "32400s",
+                "civilEndTime": {"date": {"year": 2026, "month": 8, "day": 27}},
+            },
+            "metadata": {"nap": nap, "main": main},
+            "stages": [],
+        }
+    }
+
+
+def test_sleep_selection_excludes_naps_and_is_order_independent():
+    nap = _sleep_point(12, nap=True, duration=1)
+    short = _sleep_point(7, duration=5)
+    main = _sleep_point(8, main=True, duration=8)
+
+    assert _pick_sleep_for_date([main, nap, short], "2026-08-27") is main
+    assert _pick_sleep_for_date([short, nap, main], "2026-08-27") is main
+
+
+def test_sleep_selection_uses_longest_non_nap_when_main_flag_is_absent():
+    short = _sleep_point(7, duration=5)
+    long = _sleep_point(8, duration=8)
+
+    assert _pick_sleep_for_date([short, long], "2026-08-27") is long
+
+
+def test_health_list_requests_use_civil_half_open_filter_and_page_budget():
+    urls = []
+
+    def get(url, headers):
+        urls.append(url)
+        return {"dataPoints": [], "nextPageToken": "more"}
+
+    source = GoogleHealthApiSource(lambda: "token", http_get=get)
+    source.fetch_raw("2026-08-27")
+
+    assert len(urls) <= 4 * 2
+    decoded = [urllib.parse.unquote_plus(url) for url in urls]
+    assert all('>= "2026-08-27"' in url for url in decoded)
+    assert all('< "2026-08-28"' in url for url in decoded)
+
+
+def test_health_list_stops_on_time_budget_without_following_unbounded_pages():
+    calls = {"n": 0}
+
+    def get(url, headers):
+        calls["n"] += 1
+        return {"dataPoints": [], "nextPageToken": "more"}
+
+    source = GoogleHealthApiSource(lambda: "token", http_get=get, clock=lambda: 10.0)
+    source.fetch_raw("2026-08-27")
+
+    assert calls["n"] <= 8
 
 
 def test_derives_total_and_deep_sleep():

@@ -9,6 +9,8 @@ WebhookFn（「おはよう」検出）の両方から呼ばれるため、こ�
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import uuid
+import inspect
 from datetime import date as date_cls
 from datetime import timedelta
 
@@ -27,6 +29,17 @@ from sleeptech.observability import StructuredLogger
 
 SLOT = "MORNING"
 
+
+def _retry_key(date: str, slot: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"sleeptech:{date}:{slot}"))
+
+
+def _push(deps, message: dict, retry_key: str) -> None:
+    if "retry_key" in inspect.signature(deps.push_client.push).parameters:
+        deps.push_client.push(message, retry_key=retry_key)
+    else:
+        deps.push_client.push(message)
+
 _NO_DATA_TEXT = (
     "おはようございます。今朝は睡眠データを取得できませんでした。\n"
     "予測は出せませんが、起床後30分以内に屋外光を浴びておくと今日の立ち上がりが変わります。"
@@ -44,6 +57,7 @@ class MorningDeps:
     llm_client: object
     push_client: object
     max_regen: int = 2
+    deadline: object | None = None
 
 
 def run_morning(date: str, deps: MorningDeps) -> dict:
@@ -52,7 +66,7 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
     log.log("morning_start", date=date)
 
     # 1. 冪等（定時実行と「おはよう」前倒しが重なっても1回だけ送るためのガード）
-    if deps.memory.is_notified(date, SLOT):
+    if deps.memory.is_notified(date, SLOT) or not deps.memory.claim_notification(date, SLOT):
         log.log("morning_skipped", reason="already_notified")
         return {"delivered": False, "skipped": True}
 
@@ -62,7 +76,7 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
         raw = deps.health_source.fetch_raw(wake_date)
     except ConsentRevokedError as exc:
         log.log("consent_revoked", error=str(exc))
-        deps.push_client.push(build_message(_CONSENT_TEXT, with_feedback=False))
+        _push(deps, build_message(_CONSENT_TEXT, with_feedback=False), _retry_key(date, SLOT))
         _mark_notified(deps, date, log)
         return {
             "delivered": True,
@@ -78,7 +92,7 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
 
     # 睡眠データが取れていなければ予測 % を一切出さない（推測で数字を出さない）
     if not vital.has_sleep:
-        deps.push_client.push(build_message(_NO_DATA_TEXT, with_feedback=False))
+        _push(deps, build_message(_NO_DATA_TEXT, with_feedback=False), _retry_key(date, SLOT))
         _mark_notified(deps, date, log)
         return {
             "delivered": True,
@@ -120,7 +134,7 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
 
     # push の例外はここで捕捉せず伝播させる。送信していないのに mark_notified して
     # しまう事故（Lambda 再試行時の二重送信）を防ぐため（夜フローと同じ方針）。
-    deps.push_client.push(build_message(body, with_feedback=False))
+    _push(deps, build_message(body, with_feedback=False), _retry_key(date, SLOT))
     log.log("morning_sent", fallback=used_fallback)
 
     # push は成功済みなので、ここで失敗扱いにすると再試行で二重送信になる。
@@ -167,6 +181,8 @@ def _compose(deps, curve, plan, vital, facts, log) -> tuple[str, bool]:
     """LLM で文章化し検証する。通らなければテンプレート文を返す。"""
     user = prompts.morning_user(curve, plan, vital)
     for attempt in range(deps.max_regen + 1):
+        if deps.deadline is not None and not deps.deadline.can_start():
+            break
         try:
             text = deps.llm_client.complete(prompts.MORNING_SYSTEM, user)
         except Exception as exc:  # noqa: BLE001 — LLM 障害は必ずフォールバックへ

@@ -10,12 +10,31 @@ OpenAI SDK は使わない。Lambda の実行時依存を boto3 + 標準ライ�
 from __future__ import annotations
 
 from typing import Callable
+import time
 
 API_URL = "https://api.openai.com/v1/chat/completions"
 MAX_ATTEMPTS = 3       # 初回 + リトライ2回
-TIMEOUT_SEC = 25
 TEMPERATURE = 0.7
 MAX_TOKENS = 700
+ATTEMPT_TIMEOUT_SEC = 8.0
+LINE_RESERVE_SEC = 12.0
+TIMEOUT_SEC = ATTEMPT_TIMEOUT_SEC
+
+
+class ExecutionDeadline:
+    """Lambdaの残り時間から、外部APIに使える時間を制限する。"""
+
+    def __init__(self, absolute: float, clock: Callable[[], float] | None = None,
+                 reserve_sec: float = LINE_RESERVE_SEC) -> None:
+        self.absolute = absolute
+        self._clock = clock or time.monotonic
+        self.reserve_sec = reserve_sec
+
+    def remaining_sec(self) -> float:
+        return self.absolute - self._clock()
+
+    def can_start(self, expected_sec: float = 0.0) -> bool:
+        return self.remaining_sec() > self.reserve_sec + expected_sec
 
 
 class LlmError(Exception):
@@ -29,11 +48,13 @@ class OpenAiClient:
         model: str,
         http_post: Callable[[str, dict, dict], dict] | None = None,
         sleep: Callable[[float], None] | None = None,
+        deadline: ExecutionDeadline | None = None,
     ) -> None:
         self._key = api_key
         self._model = model
         self._post = http_post or _default_http_post
         self._sleep = sleep or _default_sleep
+        self._deadline = deadline
 
     def complete(self, system: str, user: str) -> str:
         """system / user プロンプトを渡し、生成テキストを返す。
@@ -57,6 +78,8 @@ class OpenAiClient:
 
         last: Exception | None = None
         for attempt in range(MAX_ATTEMPTS):
+            if self._deadline is not None and not self._deadline.can_start(ATTEMPT_TIMEOUT_SEC):
+                raise LlmError("Lambda残り時間が少ないためLLMを中断しました")
             try:
                 resp = self._post(API_URL, headers, body)
                 text = resp["choices"][0]["message"]["content"]
@@ -66,7 +89,12 @@ class OpenAiClient:
             except Exception as exc:  # noqa: BLE001 — 全失敗を LlmError に統一する
                 last = exc
                 if attempt < MAX_ATTEMPTS - 1:
-                    self._sleep(2.0**attempt)
+                    backoff = 2.0**attempt
+                    if self._deadline is not None and not self._deadline.can_start(
+                        ATTEMPT_TIMEOUT_SEC + backoff
+                    ):
+                        break
+                    self._sleep(backoff)
         raise LlmError(f"LLM 呼び出しに失敗しました: {last}") from last
 
 

@@ -77,11 +77,13 @@ class LinePushClient:
         self._user_id = user_id
         self._post = http_post or _default_http_post
 
-    def push(self, message: dict) -> None:
+    def push(self, message: dict, retry_key: str | None = None) -> None:
         headers = {
             "Authorization": f"Bearer {self._token}",
             "Content-Type": "application/json",
         }
+        if retry_key:
+            headers["X-Line-Retry-Key"] = retry_key
         self._post(PUSH_URL, headers, {"to": self._user_id, "messages": [message]})
 
 
@@ -90,9 +92,11 @@ class FakePushClient:
 
     def __init__(self) -> None:
         self.sent: list[dict] = []
+        self.retry_keys: list[str | None] = []
 
-    def push(self, message: dict) -> None:
+    def push(self, message: dict, retry_key: str | None = None) -> None:
         self.sent.append(message)
+        self.retry_keys.append(retry_key)
 
 
 def _default_http_post(url: str, headers: dict, body: dict) -> None:
@@ -101,5 +105,5 @@ def _default_http_post(url: str, headers: dict, body: dict) -> None:
 
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=15) as r:  # noqa: S310 — 固定の LINE 端点
+    with urllib.request.urlopen(req, timeout=8) as r:  # noqa: S310 — 固定の LINE 端点
         r.read()

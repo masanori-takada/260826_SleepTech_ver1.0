@@ -155,6 +155,29 @@ def _texts(payload: dict) -> list[str]:
     return out
 
 
+def _authorized_texts(payload: dict, user_id: str) -> list[str]:
+    """許可した個人ユーザーのイベントだけ本文を返す。"""
+    if not isinstance(user_id, str) or not user_id:
+        return []
+    out: list[str] = []
+    for ev in payload.get("events", []):
+        if not isinstance(ev, dict):
+            continue
+        source = ev.get("source")
+        if not isinstance(source, dict) or source.get("type") != "user":
+            continue
+        source_user_id = source.get("userId")
+        if not isinstance(source_user_id, str) or not hmac.compare_digest(
+            source_user_id.encode("utf-8"), user_id.encode("utf-8")
+        ):
+            continue
+        msg = ev.get("message")
+        if (ev.get("type") == "message" and isinstance(msg, dict)
+                and msg.get("type") == "text" and isinstance(msg.get("text"), str)):
+            out.append(msg["text"])
+    return out
+
+
 def _parse_payload(raw_body: bytes) -> tuple[dict | None, int | None]:
     """raw bodyを一度だけJSON解析し、Function URLの入力契約を検査する。"""
     try:
@@ -178,7 +201,8 @@ def handler(event, context=None) -> dict:
 
     log = StructuredLogger()
     settings = load_settings()
-    line_secret = hd._secret(settings.secret_line, settings.region).get("channel_secret", "")
+    line_secret_data = hd._secret(settings.secret_line, settings.region)
+    line_secret = line_secret_data.get("channel_secret", "")
     if not isinstance(line_secret, str) or not line_secret:
         return _response(403, "LINE channel secret is not configured")
     verification_status = _verify_line_signature(raw_body, signature, line_secret)
@@ -192,7 +216,8 @@ def handler(event, context=None) -> dict:
     now = hd.jst_now()
     handled = []
 
-    for text in _texts(payload):
+    allowed_user_id = line_secret_data.get("user_id", "")
+    for text in _authorized_texts(payload, allowed_user_id):
         score = parse_feedback(text)
         if score is not None:
             memory = hd._memory(settings)

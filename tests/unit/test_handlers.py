@@ -87,6 +87,23 @@ def test_night_handler_uses_wall_clock_for_manual_fallback(monkeypatch):
     assert calls == [("2026-08-26", 22.5, "deps")]
 
 
+def test_night_handler_passes_lambda_deadline_to_dependencies(monkeypatch):
+    calls = _patch_night_dependencies(monkeypatch)
+    deadline = object()
+    monkeypatch.setattr(nh.hd, "deadline_from_context", lambda context: deadline)
+    captured = {}
+    monkeypatch.setattr(nh.hd, "build_night_deps",
+                        lambda settings, actual: captured.setdefault("deadline", actual) or "deps")
+
+    class Context:
+        def get_remaining_time_in_millis(self):
+            return 60000
+
+    nh.handler({}, Context())
+
+    assert captured["deadline"] is deadline
+
+
 @pytest.mark.parametrize(
     "event",
     [
@@ -148,6 +165,9 @@ def _signed_bytes_event(raw, *, encoded=False, headers=None):
 
 
 def _signed_webhook_event(events, *, encoded=False, headers=None):
+    for event in events:
+        if isinstance(event, dict) and "source" not in event:
+            event["source"] = {"type": "user", "userId": "user"}
     return _signed_raw_event(
         json.dumps({"events": events}, ensure_ascii=False),
         encoded=encoded,
@@ -334,7 +354,7 @@ def test_webhook_accepts_single_signature_in_multi_value_headers(monkeypatch):
 
 def _signature_for_event_body():
     body = json.dumps(
-        {"events": [{"type": "message", "message": {"type": "text", "text": "同期"}}]},
+        {"events": [{"type": "message", "message": {"type": "text", "text": "同期"}, "source": {"type": "user", "userId": "user"}}]},
         ensure_ascii=False,
     ).encode("utf-8")
     return base64.b64encode(
@@ -442,3 +462,19 @@ def test_texts_returns_only_string_texts_from_valid_events():
     }
 
     assert wh._texts(event) == ["有効"]
+
+
+def test_webhook_skips_unauthorized_and_group_events_without_side_effect(monkeypatch):
+    morning_calls = _patch_webhook_dependencies(monkeypatch)
+    event = _webhook_event([
+        {"type": "message", "source": {"type": "user", "userId": "third-party"},
+         "message": {"type": "text", "text": "おはよう"}},
+        {"type": "message", "source": {"type": "group", "userId": "user"},
+         "message": {"type": "text", "text": "おはよう"}},
+        {"type": "message", "source": {}, "message": {"type": "text", "text": "おはよう"}},
+    ])
+
+    result = wh.handler(event)
+
+    assert result["statusCode"] == 200
+    assert morning_calls == []

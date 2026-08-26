@@ -88,6 +88,21 @@ def test_idempotency_is_per_date_and_slot():
     assert c.is_notified("2026-08-27", "NIGHT") is False
 
 
+def test_notification_claim_is_atomic_and_lease_can_be_reclaimed():
+    c = _client()
+    assert c.claim_notification("2026-08-26", "NIGHT", now=100, lease_seconds=30) is True
+    assert c.claim_notification("2026-08-26", "NIGHT", now=110, lease_seconds=30) is False
+    assert c.claim_notification("2026-08-26", "NIGHT", now=131, lease_seconds=30) is True
+
+
+def test_mark_notified_completes_claim_and_is_notified_ignores_pending():
+    c = _client()
+    assert c.claim_notification("2026-08-26", "NIGHT", now=100, lease_seconds=30) is True
+    assert c.is_notified("2026-08-26", "NIGHT") is False
+    assert c.mark_notified("2026-08-26", "NIGHT") is True
+    assert c.is_notified("2026-08-26", "NIGHT") is True
+
+
 def test_mark_notified_propagates_non_conditional_errors():
     class FailingBackend(InMemoryBackend):
         def put_conditional(self, pk, sk, value, ttl_days=None):
