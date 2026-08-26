@@ -2272,13 +2272,13 @@ def morning_text(curve, recovery_plan, vital) -> str:
 
     if vital.total_sleep_min is not None:
         h, m = divmod(int(vital.total_sleep_min), 60)
-        detail = [f"昨夜は {h}時間{m}分"]
+        extras = []
         if vital.deep_sleep_min is not None:
-            detail.append(f"深い睡眠{vital.deep_sleep_min}分")
+            extras.append(f"深い睡眠{vital.deep_sleep_min}分")
         if vital.awakenings is not None:
-            detail.append(f"中途覚醒{vital.awakenings}回")
-        lines.append("（".join([detail[0], "・".join(detail[1:]) + "）"]) if len(detail) > 1
-                     else detail[0])
+            extras.append(f"中途覚醒{vital.awakenings}回")
+        head = f"昨夜は {h}時間{m}分"
+        lines.append(f"{head}（{'・'.join(extras)}）" if extras else head)
 
     lines.append("")
     lines.append("今日の見込み")
