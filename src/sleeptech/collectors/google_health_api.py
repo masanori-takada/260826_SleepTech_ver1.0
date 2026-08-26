@@ -160,7 +160,7 @@ class GoogleHealthApiSource:
         point = _pick_sleep_for_date(all_points, date)
         if point is None:
             return empty
-        return _derive_sleep_metrics(point.get("sleep", {}))
+        return _derive_sleep_metrics(point.get("sleep", {}), wake_date=date)
 
 
 # --- sleep helpers ---
@@ -200,7 +200,7 @@ def _pick_sleep_for_date(points: list, date: str):
     return None
 
 
-def _derive_sleep_metrics(sleep_block: dict) -> dict:
+def _derive_sleep_metrics(sleep_block: dict, wake_date: str) -> dict:
     """STAGES 配列から睡眠指標を派生する。
 
     転用元からの変更点:
@@ -208,15 +208,18 @@ def _derive_sleep_metrics(sleep_block: dict) -> dict:
       - interval から就寝時刻・起床時刻を導出した（推奨就寝時刻の逆算に必須）
 
     総睡眠時間 = AWAKE 以外（LIGHT/DEEP/REM 等）のステージ時間の合計。
-    時刻は起点日 0:00 からの経過時間（時）。起床は翌日なので 24 以上になる。
+    時刻は起点日（= wake_date の前日）0:00 からの経過時間（時）。
+    起点日 0:00 を原点として直接計算するため、就寝自体が日付をまたいでも
+    （例: 起点日の翌日 1:30 就寝）絶対位置が正しく出る。
+    「wake_h <= bedtime_h なら +24」という事後補正のヒューリスティックは
+    起点をまたがない夜（＝就寝自体が日付をまたいだ夜）を扱えないため廃止した。
+
+    stages が空でも interval が有効なら bedtime_h / wake_h は導出する
+    （起床時刻は推奨就寝時刻の逆算に使う最重要フィールドのため）。
+    ステージ由来の項目（total_sleep_min 等）のみ stages が空なら None。
     """
-    empty = {
-        "total_sleep_min": None, "deep_sleep_min": None, "rem_sleep_min": None,
-        "awakenings": None, "bedtime_h": None, "wake_h": None,
-    }
     stages = sleep_block.get("stages") or []
-    if not stages:
-        return empty
+    have_stages = bool(stages)
 
     total_min = 0.0
     deep_min = 0.0
@@ -239,33 +242,44 @@ def _derive_sleep_metrics(sleep_block: dict) -> dict:
             rem_min += dur
 
     interval = sleep_block.get("interval") or {}
-    bedtime_h = _local_hours(interval.get("startTime"), interval.get("startUtcOffset"))
-    wake_h = _local_hours(interval.get("endTime"), interval.get("endUtcOffset"))
-    # 起床は就寝の翌日なので 24 を足して連続値にする
-    if bedtime_h is not None and wake_h is not None and wake_h <= bedtime_h:
-        wake_h += 24.0
+    origin = _origin_midnight(wake_date)
+    bedtime_h = _hours_from_origin(interval.get("startTime"), interval.get("startUtcOffset"), origin)
+    wake_h = _hours_from_origin(interval.get("endTime"), interval.get("endUtcOffset"), origin)
 
     return {
-        "total_sleep_min": int(round(total_min)),
-        "deep_sleep_min": int(round(deep_min)),
-        "rem_sleep_min": int(round(rem_min)),
-        "awakenings": awakenings,
+        "total_sleep_min": int(round(total_min)) if have_stages else None,
+        "deep_sleep_min": int(round(deep_min)) if have_stages else None,
+        "rem_sleep_min": int(round(rem_min)) if have_stages else None,
+        "awakenings": awakenings if have_stages else None,
         "bedtime_h": bedtime_h,
         "wake_h": wake_h,
     }
 
 
-def _local_hours(iso_utc: str | None, offset_str: str | None) -> float | None:
-    """UTC ISO 時刻 + UTCオフセット秒 → その日の 0:00 からの経過時間（時）。"""
+def _origin_midnight(wake_date: str):
+    """起点日（= wake_date の前日）0:00 の naive datetime を返す。"""
+    from datetime import date as date_cls, datetime, timedelta
+
+    d = date_cls.fromisoformat(wake_date) - timedelta(days=1)
+    return datetime(d.year, d.month, d.day)
+
+
+def _hours_from_origin(iso_utc: str | None, offset_str: str | None, origin) -> float | None:
+    """UTC ISO 時刻 + UTCオフセット秒 → 起点日 0:00 からの経過時間（時）。
+
+    ローカル日時と起点（origin、_origin_midnight が返す naive datetime）の差を
+    そのまま時間単位にするため、就寝が起点日の翌日にまたがっても
+    （例: 1:30 就寝なら 25.5 時）絶対位置が保たれる。
+    """
     from datetime import datetime, timedelta
 
     if not iso_utc:
         return None
     try:
-        t = datetime.fromisoformat(iso_utc.replace("Z", "+00:00"))
+        t_utc = datetime.fromisoformat(iso_utc.replace("Z", "+00:00"))
         off = int(str(offset_str).rstrip("s")) if offset_str else 0
-        local = t + timedelta(seconds=off)
-        return round(local.hour + local.minute / 60.0 + local.second / 3600.0, 4)
+        local = (t_utc + timedelta(seconds=off)).replace(tzinfo=None)
+        return round((local - origin).total_seconds() / 3600.0, 4)
     except (ValueError, TypeError):
         return None
 
