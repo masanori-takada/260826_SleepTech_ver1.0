@@ -1,5 +1,8 @@
 """Lambda ハンドラの入力契約とイベント単位の耐障害性を検証する。"""
 
+import base64
+import hashlib
+import hmac
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -123,13 +126,47 @@ def test_night_handler_rejects_unknown_keys_and_non_mapping_events(monkeypatch, 
 
 
 def _webhook_event(events):
-    return {"body": json.dumps({"events": events}, ensure_ascii=False)}
+    return _signed_webhook_event(events)
+
+
+LINE_SECRET = "line-channel-secret"
+
+
+def _signed_raw_event(body, *, encoded=False, headers=None):
+    raw = body.encode("utf-8")
+    signature = base64.b64encode(
+        hmac.new(LINE_SECRET.encode("utf-8"), raw, hashlib.sha256).digest()
+    ).decode("ascii")
+    return {
+        "body": base64.b64encode(raw).decode("ascii") if encoded else body,
+        "isBase64Encoded": encoded,
+        "headers": {"x-line-signature": signature} if headers is None else headers,
+    }
+
+
+def _signed_webhook_event(events, *, encoded=False, headers=None):
+    return _signed_raw_event(
+        json.dumps({"events": events}, ensure_ascii=False),
+        encoded=encoded,
+        headers=headers,
+    )
 
 
 def _patch_webhook_dependencies(monkeypatch):
     settings = _Settings()
+    settings.secret_line = "sleeptech/line"
+    settings.region = "ap-northeast-1"
     morning_calls = []
     monkeypatch.setattr(wh, "load_settings", lambda: settings)
+    monkeypatch.setattr(
+        wh.hd,
+        "_secret",
+        lambda name, region: {
+            "channel_secret": LINE_SECRET,
+            "channel_access_token": "token",
+            "user_id": "user",
+        },
+    )
     monkeypatch.setattr(wh.hd, "jst_now", lambda: datetime(2026, 8, 27, 8, tzinfo=JST))
     monkeypatch.setattr(wh.hd, "build_morning_deps", lambda actual: "deps")
     monkeypatch.setattr(
@@ -140,12 +177,142 @@ def _patch_webhook_dependencies(monkeypatch):
     return morning_calls
 
 
+def test_webhook_rejects_missing_signature_before_loading_settings(monkeypatch):
+    monkeypatch.setattr(
+        wh,
+        "load_settings",
+        lambda: pytest.fail("署名欠落時は設定を読み込まない"),
+    )
+
+    result = wh.handler({"body": json.dumps({"events": []}), "headers": {}})
+
+    assert result["statusCode"] == 401
+
+
+def test_webhook_rejects_mismatched_signature_before_domain_processing(monkeypatch):
+    morning_calls = _patch_webhook_dependencies(monkeypatch)
+    event = _signed_webhook_event(
+        [{"type": "message", "message": {"type": "text", "text": "おはよう"}}],
+        headers={"x-line-signature": "invalid"},
+    )
+
+    result = wh.handler(event)
+
+    assert result["statusCode"] == 403
+    assert morning_calls == []
+
+
+def test_webhook_accepts_valid_signature_and_preserves_raw_body(monkeypatch):
+    morning_calls = _patch_webhook_dependencies(monkeypatch)
+    event = _signed_webhook_event(
+        [{"type": "message", "message": {"type": "text", "text": "おはよう"}}]
+    )
+
+    result = wh.handler(event)
+
+    assert result["statusCode"] == 200
+    assert morning_calls == [("2026-08-26", "deps")]
+
+
+def test_webhook_accepts_valid_signature_for_base64_body(monkeypatch):
+    morning_calls = _patch_webhook_dependencies(monkeypatch)
+    event = _signed_webhook_event(
+        [{"type": "message", "message": {"type": "text", "text": "同期"}}],
+        encoded=True,
+    )
+
+    result = wh.handler(event)
+
+    assert result["statusCode"] == 200
+    assert morning_calls == [("2026-08-26", "deps")]
+
+
+def test_webhook_accepts_case_insensitive_signature_header(monkeypatch):
+    morning_calls = _patch_webhook_dependencies(monkeypatch)
+    event = _signed_webhook_event(
+        [{"type": "message", "message": {"type": "text", "text": "同期"}}],
+        headers={"X-Line-Signature": _signature_for_event_body()},
+    )
+
+    result = wh.handler(event)
+
+    assert result["statusCode"] == 200
+    assert morning_calls == [("2026-08-26", "deps")]
+
+
+def test_webhook_accepts_single_signature_in_multi_value_headers(monkeypatch):
+    morning_calls = _patch_webhook_dependencies(monkeypatch)
+    event = _signed_webhook_event(
+        [{"type": "message", "message": {"type": "text", "text": "同期"}}],
+        headers={},
+    )
+    event["multiValueHeaders"] = {"X-LINE-SIGNATURE": [_signature_for_event_body()]}
+
+    result = wh.handler(event)
+
+    assert result["statusCode"] == 200
+    assert morning_calls == [("2026-08-26", "deps")]
+
+
+def _signature_for_event_body():
+    body = json.dumps(
+        {"events": [{"type": "message", "message": {"type": "text", "text": "同期"}}]},
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return base64.b64encode(
+        hmac.new(LINE_SECRET.encode("utf-8"), body, hashlib.sha256).digest()
+    ).decode("ascii")
+
+
 @pytest.mark.parametrize(
     "event",
     [
-        {"body": "not-json"},
-        {"body": "[]"},
-        {"body": json.dumps({"events": "not-a-list"})},
+        {"headers": {"x-line-signature": "anything"}},
+        {"body": "%%%", "isBase64Encoded": True, "headers": {}},
+    ],
+)
+def test_webhook_rejects_missing_or_invalid_body_before_external_processing(monkeypatch, event):
+    monkeypatch.setattr(
+        wh,
+        "load_settings",
+        lambda: pytest.fail("不正body時は設定を読み込まない"),
+    )
+
+    result = wh.handler(event)
+
+    assert 400 <= result["statusCode"] < 500
+
+
+def test_webhook_rejects_malformed_header_container_without_raising(monkeypatch):
+    monkeypatch.setattr(
+        wh,
+        "load_settings",
+        lambda: pytest.fail("不正headers時は設定を読み込まない"),
+    )
+
+    result = wh.handler({"body": "{}", "headers": "not-a-map"})
+
+    assert result["statusCode"] == 401
+
+
+def test_webhook_rejects_non_boolean_base64_flag(monkeypatch):
+    monkeypatch.setattr(
+        wh,
+        "load_settings",
+        lambda: pytest.fail("不正フラグ時は設定を読み込まない"),
+    )
+
+    result = wh.handler({"body": "{}", "isBase64Encoded": "true", "headers": {}})
+
+    assert result["statusCode"] == 400
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        _signed_raw_event("not-json"),
+        _signed_raw_event("[]"),
+        _signed_raw_event(json.dumps({"events": "not-a-list"})),
         _webhook_event([{"type": "message", "message": []}]),
         _webhook_event([{"type": "message", "message": {"type": "text", "text": 3}}]),
     ],

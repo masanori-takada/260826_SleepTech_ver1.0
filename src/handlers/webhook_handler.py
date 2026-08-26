@@ -10,8 +10,13 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+import hmac
 import json
 import re
+from collections.abc import Mapping
 from datetime import date as date_cls
 from datetime import timedelta
 
@@ -26,6 +31,70 @@ _WAKEUP_RE = re.compile(r"^(おはよう(ございます)?|起きた|おきた|�
 # range(FEEDBACK_LOOKBACK_DAYS) で「当日」と「前日」の2日分のみを見る
 # （2日前は見ない）。定数名は「遡る日数」ではなく「見る日数」を表す。
 FEEDBACK_LOOKBACK_DAYS = 2
+
+
+def _response(status_code: int, error: str) -> dict:
+    """Function URL向けのエラーレスポンスを作る。"""
+    return {"statusCode": status_code, "body": json.dumps({"error": error})}
+
+
+def _header(event: dict, name: str) -> str | None:
+    """通常ヘッダーと複数値ヘッダーから値を大文字小文字非依存で得る。"""
+    target = name.casefold()
+    headers = event.get("headers")
+    if not isinstance(headers, Mapping):
+        headers = {}
+    for header_name, value in headers.items():
+        if not isinstance(header_name, str) or header_name.casefold() != target:
+            continue
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (list, tuple)) and len(value) == 1 and isinstance(value[0], str):
+            return value[0]
+
+    multi_headers = event.get("multiValueHeaders")
+    if not isinstance(multi_headers, Mapping):
+        multi_headers = {}
+    for header_name, values in multi_headers.items():
+        if not isinstance(header_name, str) or header_name.casefold() != target:
+            continue
+        if isinstance(values, (list, tuple)) and len(values) == 1 and isinstance(values[0], str):
+            return values[0]
+        if isinstance(values, str):
+            return values
+    return None
+
+
+def _raw_body(event: dict) -> bytes | None:
+    """Function URLイベントのraw bodyを改変せずバイト列へ戻す。"""
+    body = event.get("body")
+    if not isinstance(body, str):
+        return None
+    encoded = event.get("isBase64Encoded", False)
+    if not isinstance(encoded, bool):
+        return None
+    if encoded:
+        try:
+            return base64.b64decode(body, validate=True)
+        except (binascii.Error, ValueError):
+            return None
+    return body.encode("utf-8")
+
+
+def _verify_line_signature(event: dict, channel_secret: str) -> int | None:
+    """LINE署名を検証し、拒否時のHTTPステータスを返す。"""
+    raw_body = _raw_body(event)
+    if raw_body is None:
+        return 400
+    received = _header(event, "x-line-signature")
+    if not received:
+        return 401
+    expected = base64.b64encode(
+        hmac.new(channel_secret.encode("utf-8"), raw_body, hashlib.sha256).digest()
+    ).decode("ascii")
+    if not hmac.compare_digest(expected, received):
+        return 403
+    return None
 
 
 def is_wakeup_trigger(text: str) -> bool:
@@ -56,7 +125,10 @@ def _texts(event) -> list[str]:
     if not isinstance(event, dict):
         return []
     try:
-        body = json.loads(event.get("body") or "{}")
+        raw_body = _raw_body(event)
+        if raw_body is None:
+            return []
+        body = json.loads(raw_body.decode("utf-8"))
     except (TypeError, ValueError, AttributeError):
         return []
 
@@ -81,8 +153,24 @@ def _texts(event) -> list[str]:
 
 
 def handler(event, context=None) -> dict:
+    if not isinstance(event, dict):
+        return _response(400, "event must be an object")
+    raw_body = _raw_body(event)
+    if raw_body is None:
+        return _response(400, "body must be valid")
+    signature = _header(event, "x-line-signature")
+    if not signature:
+        return _response(401, "missing LINE signature")
+
     log = StructuredLogger()
     settings = load_settings()
+    line_secret = hd._secret(settings.secret_line, settings.region).get("channel_secret", "")
+    if not isinstance(line_secret, str) or not line_secret:
+        return _response(403, "LINE channel secret is not configured")
+    verification_status = _verify_line_signature(event, line_secret)
+    if verification_status is not None:
+        return _response(verification_status, "invalid LINE signature")
+
     now = hd.jst_now()
     handled = []
 

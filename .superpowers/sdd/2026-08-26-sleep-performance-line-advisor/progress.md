@@ -57,3 +57,10 @@
   - Round 2: excluded development assets and added the Task 17 public-release signature gate.
   - Round 3: corrected documentation consistency across the report and Task 17 plan.
   - Task 17 carry-forward: implement LINE raw-body HMAC-SHA256 signature verification with `channel_secret`; missing signature returns 401, mismatched signature returns 403, and verification must pass before deploy.
+
+- Task 17 public-release signature gate: implementation complete in working tree; commit pending.
+  - Added raw-body HMAC-SHA256 verification for Function URL payload v2, including base64 body decoding, case-insensitive headers, and safe single-value `multiValueHeaders` handling.
+  - Missing signature returns 401; mismatched signature returns 403; malformed body/base64/event metadata returns 400 before domain processing.
+  - `channel_secret` is read from the existing `sleeptech/line` Secrets Manager JSON; `channel_access_token` and `user_id` contracts remain unchanged.
+  - Verification: `python -m pytest -q` passed 315 tests; `git diff --check` passed.
+  - AWS deploy, Secrets registration, external API calls, LINE real-device verification, and old Scheduler stop were not performed. Remaining Task 17 work is blocked on credentials, user approval, and external state.
