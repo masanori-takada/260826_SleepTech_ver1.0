@@ -130,15 +130,17 @@ class GoogleHealthApiSource:
 
     # ---- sleep（list、スコープ必須）---- ページネーション対応
     def _fetch_sleep(self, date, headers):
-        """睡眠は STAGES 配列で返るため、深い睡眠時間・中途覚醒回数を派生する。
+        """睡眠は STAGES 配列で返るため、総睡眠時間・深い睡眠時間・REM・中途覚醒・
+        就寝時刻・起床時刻を派生する。
 
         実機(Fitbit Inspire 3)レスポンス: sleep.{interval, type:"STAGES", stages:[{type,startTime,endTime}]}
-        sleep_score は本データ型に含まれないため None（別データ型が必要なら今後追加）。
         ページネーション必須: pageSize=500 でも1ページ13〜25件しか返らず nextPageToken あり（実測）。
         全ページを取得してから対象日を探すことで6ヶ月分以上をカバーする。
         """
-        empty = {"sleep_score": None, "total_sleep_min": None,
-                 "deep_sleep_min": None, "awakenings": None}
+        empty = {
+            "total_sleep_min": None, "deep_sleep_min": None, "rem_sleep_min": None,
+            "awakenings": None, "bedtime_h": None, "wake_h": None,
+        }
         all_points: list = []
         next_token = None
         while True:
@@ -199,17 +201,26 @@ def _pick_sleep_for_date(points: list, date: str):
 
 
 def _derive_sleep_metrics(sleep_block: dict) -> dict:
-    """STAGES 配列から総睡眠時間・深い睡眠時間(分)・中途覚醒回数を派生。
+    """STAGES 配列から睡眠指標を派生する。
+
+    転用元からの変更点:
+      - REM ステージの合計を rem_sleep_min として追加した（気分カーブに使う）
+      - interval から就寝時刻・起床時刻を導出した（推奨就寝時刻の逆算に必須）
 
     総睡眠時間 = AWAKE 以外（LIGHT/DEEP/REM 等）のステージ時間の合計。
+    時刻は起点日 0:00 からの経過時間（時）。起床は翌日なので 24 以上になる。
     """
+    empty = {
+        "total_sleep_min": None, "deep_sleep_min": None, "rem_sleep_min": None,
+        "awakenings": None, "bedtime_h": None, "wake_h": None,
+    }
     stages = sleep_block.get("stages") or []
     if not stages:
-        return {"sleep_score": None, "total_sleep_min": None,
-                "deep_sleep_min": None, "awakenings": None}
+        return empty
 
     total_min = 0.0
     deep_min = 0.0
+    rem_min = 0.0
     awakenings = 0
     for i, s in enumerate(stages):
         stype = (s.get("type") or "").upper()
@@ -218,19 +229,45 @@ def _derive_sleep_metrics(sleep_block: dict) -> dict:
             continue
         dur = _minutes_between(start, end)
         if stype == "AWAKE":
-            if i > 0:  # 睡眠開始(先頭)以外の AWAKE を中途覚醒としてカウント
+            if i > 0:  # 先頭の AWAKE は入眠前なので中途覚醒に数えない
                 awakenings += 1
-        else:
-            total_min += dur  # LIGHT/DEEP/REM 等は睡眠時間に算入
-            if stype == "DEEP":
-                deep_min += dur
+            continue
+        total_min += dur
+        if stype == "DEEP":
+            deep_min += dur
+        elif stype == "REM":
+            rem_min += dur
+
+    interval = sleep_block.get("interval") or {}
+    bedtime_h = _local_hours(interval.get("startTime"), interval.get("startUtcOffset"))
+    wake_h = _local_hours(interval.get("endTime"), interval.get("endUtcOffset"))
+    # 起床は就寝の翌日なので 24 を足して連続値にする
+    if bedtime_h is not None and wake_h is not None and wake_h <= bedtime_h:
+        wake_h += 24.0
 
     return {
-        "sleep_score": None,  # STAGES データには含まれない（必要なら別データ型）
         "total_sleep_min": int(round(total_min)),
         "deep_sleep_min": int(round(deep_min)),
+        "rem_sleep_min": int(round(rem_min)),
         "awakenings": awakenings,
+        "bedtime_h": bedtime_h,
+        "wake_h": wake_h,
     }
+
+
+def _local_hours(iso_utc: str | None, offset_str: str | None) -> float | None:
+    """UTC ISO 時刻 + UTCオフセット秒 → その日の 0:00 からの経過時間（時）。"""
+    from datetime import datetime, timedelta
+
+    if not iso_utc:
+        return None
+    try:
+        t = datetime.fromisoformat(iso_utc.replace("Z", "+00:00"))
+        off = int(str(offset_str).rstrip("s")) if offset_str else 0
+        local = t + timedelta(seconds=off)
+        return round(local.hour + local.minute / 60.0 + local.second / 3600.0, 4)
+    except (ValueError, TypeError):
+        return None
 
 
 # --- rollup helpers ---
