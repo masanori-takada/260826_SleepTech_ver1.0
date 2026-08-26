@@ -1,5 +1,7 @@
 # Task 17 レポート: 公開前LINE署名検証ゲート
 
+Round 1 implementation commit: `3a47d88fd7e91e7bfe50c27b9d3c40eb829433e`
+
 ## Round 1 修正内容
 
 ### 1. 署名形式の厳密化
