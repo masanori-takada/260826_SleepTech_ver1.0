@@ -44,6 +44,11 @@ def test_night_text_changes_for_too_late_status():
     assert "今すぐ" in fallback.night_text(too_late, BASE, debt_h=5.0)
 
 
+def test_night_text_uses_day_prefix_for_next_day_bedtime():
+    advice = BedtimeAdvice(bedtime_h=24.5, mean_drop_pct=8, curve=CURVE, status="ok")
+    assert "翌 0:30" in fallback.night_text(advice, BASE, debt_h=0.0)
+
+
 def test_morning_text_lists_the_curve_and_recovery():
     got = fallback.morning_text(CURVE, PLAN, VITAL)
     assert "14" in got and "19" in got

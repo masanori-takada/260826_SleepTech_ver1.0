@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sleeptech.timefmt import fmt_hm_plain
+from sleeptech.timefmt import fmt_hm, fmt_hm_plain
 
 
 _ESTIMATE_NOTE = "※あなたの平常時を100%とした推定の目安です"
@@ -11,7 +11,7 @@ _LOW_DATA_NOTE = "※まだデータが少ないため精度は低めです"
 
 def night_text(advice, baseline, debt_h: float) -> str:
     """夜のテンプレート文を返す。"""
-    time_s = fmt_hm_plain(advice.bedtime_h)
+    time_s = fmt_hm(advice.bedtime_h)
     lines: list[str] = []
 
     if debt_h > 0.5:
