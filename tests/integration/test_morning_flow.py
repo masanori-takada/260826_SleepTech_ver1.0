@@ -134,6 +134,64 @@ def test_falls_back_to_template_when_llm_fails():
     assert "☕" in push.sent[0]["text"]
 
 
+def test_fallback_text_marks_the_dip_in_the_main_window_not_at_wake_time():
+    """`run_morning` が組む Facts.percents / 「← 谷」は、起床時刻の値ではなく
+    主要時間帯（起床+2h〜+10h、起床7:00なら9〜17時）内の最大値であること。
+
+    LLM を落として（NullClient）フォールバック文（fallback.morning_text が
+    使うのと同じ curve・同じ worst 判定ロジック）を経由させて確認する。
+    """
+    push = FakePushClient()
+    got = morning.run_morning(DATE, _deps(llm=NullClient(), push=push))
+    assert got["used_fallback"] is True
+    text = push.sent[0]["text"]
+    marked = [line for line in text.splitlines() if "← 谷" in line]
+    assert len(marked) == 1
+    hour = int(marked[0].strip().split("時台")[0])
+    assert hour not in (7, 8)  # 起床（7時）・起床+1h（8時）には付かない
+    assert 9 <= hour <= 17     # 起床+2h 〜 +10h
+
+
+def test_no_exception_for_various_sleep_durations():
+    """5h/7h/8h いずれの睡眠時間でも朝フローが例外なく完走すること。"""
+    for bedtime_h, sleep_h in ((26.0, 5.0), (24.0, 7.0), (23.0, 8.0)):
+        raw = {
+            "total_sleep_min": int(sleep_h * 60), "deep_sleep_min": 48, "rem_sleep_min": 70,
+            "awakenings": 3, "bedtime_h": bedtime_h, "wake_h": 31.0, "hrv": 38.0,
+        }
+        push = FakePushClient()
+        got = morning.run_morning(
+            DATE, _deps(source=FakeHealthSource(raw=raw), llm=NullClient(), push=push)
+        )
+        assert got["delivered"] is True
+        assert len(push.sent) == 1
+
+
+class EchoLlm:
+    """プロンプト（morning_user）が列挙する確定値をそのまま本文として返す偽 LLM。
+
+    morning_user はすべての時刻・低下率を既にガードレール互換の表記
+    （時刻は fmt_hm_plain、低下率は符号付き "-N%"）で出力しているため、
+    それをそのまま返し、必須の「目安」注記だけ加えれば検証を通る。
+    LLM 成功経路（used_fallback=False）が Facts.percents の求め方を
+    変えた後も引き続き通ることを確認するために使う。
+    """
+
+    def complete(self, system: str, user: str) -> str:
+        return user + "\n※あなたの平常時を100%とした推定の目安です"
+
+
+def test_llm_success_path_still_passes_after_percents_change():
+    """Facts.percents の求め方を変えても、LLM 成功経路（used_fallback=False）が
+    引き続き通ることを確認する（プロンプトの指示に従って文面を組み立てる
+    偽 LLM を注入）。
+    """
+    push = FakePushClient()
+    got = morning.run_morning(DATE, _deps(llm=EchoLlm(), push=push))
+    assert got["used_fallback"] is False
+    assert len(push.sent) == 1
+
+
 def test_afternoon_shows_a_local_dip_after_short_sleep():
     """5時間台の睡眠でも、午後（post-lunch dip）に局所的な谷が現れる。
 

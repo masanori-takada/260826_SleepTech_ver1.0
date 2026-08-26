@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from sleeptech.model import two_process as tp
 from sleeptech.timefmt import fmt_hm, fmt_hm_plain
 
 
@@ -47,7 +48,10 @@ def morning_text(curve, recovery_plan, vital) -> str:
 
     lines.append("")
     lines.append("今日の見込み")
-    worst = max(curve, key=lambda drop: drop.focus_pct) if curve else None
+    # 「谷」は主要時間帯（起床+2h〜+10h）に限定して探す。全区間で探すと睡眠慣性の
+    # 影響で起床直後が常に最大になり、「← 谷」が毎回起床時刻に付いてしまうため。
+    main_window = tp.main_window_slice(curve) if curve else []
+    worst = max(main_window, key=lambda drop: drop.focus_pct) if main_window else None
     for drop in curve:
         mark = "  ← 谷" if drop is worst and drop.focus_pct > 0 else ""
         lines.append(f"  {drop.hour}時台  -{drop.focus_pct}%{mark}")

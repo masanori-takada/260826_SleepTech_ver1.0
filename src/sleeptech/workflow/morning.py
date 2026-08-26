@@ -104,7 +104,9 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
     # 6. 文章化・検証・送信
     # 必須は谷の低下率1つ。他の時間帯の値は許可リストに入れる（列挙しても捏造扱いしない）
     all_pcts = [d.focus_pct for d in curve] + [d.mood_pct for d in curve]
-    worst = max(curve, key=lambda d: d.focus_pct)
+    # 谷（LLM に必須値として要求する低下率）は主要時間帯（起床+2h〜+10h）に限定する。
+    # 全区間で探すと睡眠慣性の影響で起床直後の値が常に最大になってしまうため。
+    worst = max(tp.main_window_slice(curve), key=lambda d: d.focus_pct)
     times = list(plan.caffeine_times_h) + [
         plan.caffeine_cutoff_h, plan.light_morning_h, plan.light_avoid_after_h
     ]

@@ -2,7 +2,15 @@
 
 from sleeptech.guardrail import fallback
 from sleeptech.guardrail import validator as v
-from sleeptech.memory.schemas import Baseline, BedtimeAdvice, DailyVital, HourlyDrop, RecoveryPlan
+from sleeptech.memory.schemas import (
+    Baseline,
+    BedtimeAdvice,
+    DailyVital,
+    HourlyDrop,
+    RecoveryPlan,
+    SleepInput,
+)
+from sleeptech.model import two_process as tp
 
 
 BASE = Baseline(wake_h=31.0, sleep_h=7.5, rem_min=90.0, deep_min=60.0, days_used=14, is_default=False)
@@ -60,3 +68,52 @@ def test_morning_text_handles_no_caffeine():
     """カフェインを勧めない場合でも文が壊れない。"""
     plan = RecoveryPlan(caffeine_times_h=[], caffeine_cutoff_h=30.0, light_morning_h=31.5, light_avoid_after_h=44.5)
     assert "カフェイン" in fallback.morning_text(CURVE, plan, VITAL)
+
+
+# --- 「← 谷」は主要時間帯（起床+2h〜+10h）に限定する回帰テスト ---
+
+_BASELINE_75H = Baseline(wake_h=31.0, sleep_h=7.5, rem_min=90.0, deep_min=60.0, days_used=14, is_default=False)
+
+
+def _curve_for(sleep_h: float):
+    """wake_h=31.0（7:00）・指定した睡眠時間の予測カーブを返す。"""
+    sleep = SleepInput(bedtime_h=31.0 - sleep_h, wake_h=31.0, rem_min=90.0, deep_min=60.0)
+    return tp.predict_curve(sleep, _BASELINE_75H, debt_h=0.0)
+
+
+def _marked_hour(text: str) -> int | None:
+    """「← 谷」が付いた行の時台を返す。付いていなければ None。"""
+    for line in text.splitlines():
+        if "← 谷" in line:
+            return int(line.strip().split("時台")[0])
+    return None
+
+
+def test_morning_text_marks_the_dip_inside_the_main_window_not_at_wake_time():
+    """5時間睡眠・起床7:00 のとき、「← 谷」は主要時間帯（起床+2h〜+10h＝9〜17時）に
+    付き、起床直後（7時・8時）には付かない。
+
+    Two-Process Model では残存睡眠圧により起床直後が全区間の最大になるため、
+    全区間から谷を探すと毎回起床時刻に印が付いてしまう不具合があった。
+    """
+    curve = _curve_for(5.0)
+    text = fallback.morning_text(curve, PLAN, VITAL)
+    hour = _marked_hour(text)
+    assert hour is not None
+    assert hour not in (7, 8)
+    assert 9 <= hour <= 17
+
+
+def test_morning_text_does_not_mark_a_dip_when_all_percents_are_zero():
+    """8時間睡眠（負債なし）で全時間帯 0% のときは「← 谷」を付けない。"""
+    curve = _curve_for(8.0)
+    assert all(d.focus_pct == 0 for d in curve)
+    text = fallback.morning_text(curve, PLAN, VITAL)
+    assert "← 谷" not in text
+
+
+def test_morning_text_does_not_raise_for_various_sleep_durations():
+    """5h/7h/8h いずれでも例外が出ないこと。"""
+    for sleep_h in (5.0, 7.0, 8.0):
+        curve = _curve_for(sleep_h)
+        fallback.morning_text(curve, PLAN, VITAL)

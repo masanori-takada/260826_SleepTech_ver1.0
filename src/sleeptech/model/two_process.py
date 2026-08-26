@@ -119,8 +119,8 @@ def predict_curve(sleep: SleepInput, baseline: Baseline, debt_h: float) -> list[
     return curve
 
 
-def mean_drop_in_main_window(curve: list[HourlyDrop], wake_h: float) -> float:
-    """主要時間帯（起床+2h 〜 起床+10h）の集中力低下率の平均。
+def main_window_slice(curve: list[HourlyDrop]) -> list[HourlyDrop]:
+    """curve のうち主要時間帯（起床+2h 〜 起床+10h）に対応する部分を返す。
 
     curve は predict_curve が返す「起床時刻から1時間刻みで CURVE_HOURS 個」の
     連番リストであることを前提とし、インデックス i は wake_h + i 時点に対応する。
@@ -128,15 +128,29 @@ def mean_drop_in_main_window(curve: list[HourlyDrop], wake_h: float) -> float:
     にそのまま対応するため、hour（% 24 された離散値）ではなくインデックスで
     絞り込む。hour で比較すると主要時間帯が日をまたぐ起床時刻（例: 昼過ぎ〜夜の
     起床）で start > end となり、範囲判定が常に false になるバグがあったため
-    修正した。wake_h はこの前提の下では不要だが、シグネチャ互換のため残す。
+    修正した。
+
+    「午後の谷」の判定（morning_text の「← 谷」印、Facts.percents の必須値）と
+    推奨就寝時刻の平均低下率（mean_drop_in_main_window）は、どちらも起床直後の
+    睡眠慣性区間（Process S の残存効果で必ず全区間最大になる）を除外して主要
+    時間帯だけを見るべきという同じ要件を持つため、切り出し処理をここに共通化した。
     """
     start_idx = int(C.MAIN_WINDOW_START_H)
     end_idx = int(C.MAIN_WINDOW_END_H)
-    picked = [d.focus_pct for d in curve[start_idx : end_idx + 1]]
+    picked = curve[start_idx : end_idx + 1]
     if not picked:
         # curve が主要時間帯の開始にすら届かないほど短い場合の防御的フォールバック。
         # 通常運用では CURVE_HOURS(16) > end_idx(10) のため発生しない。
-        picked = [d.focus_pct for d in curve]
+        picked = list(curve)
+    return picked
+
+
+def mean_drop_in_main_window(curve: list[HourlyDrop], wake_h: float) -> float:
+    """主要時間帯（起床+2h 〜 起床+10h）の集中力低下率の平均。
+
+    wake_h はこの前提の下では不要だが、シグネチャ互換のため残す。
+    """
+    picked = [d.focus_pct for d in main_window_slice(curve)]
     return sum(picked) / len(picked)
 
 
