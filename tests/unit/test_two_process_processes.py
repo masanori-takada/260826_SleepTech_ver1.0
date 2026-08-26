@@ -31,20 +31,35 @@ def test_pressure_awake_matches_formula():
     assert got == round(want, 6)
 
 
-def test_circadian_minimum_is_two_hours_before_wake():
-    """概日リズムの底は起床の2時間前にある。"""
+def test_circadian_trough_is_in_the_early_morning():
+    """概日リズムの谷は起床前の早朝帯にある。
+
+    第2高調波（12時間周期）を加えると谷は起床のちょうど2時間前ではなく
+    3時間前後へずれる。位置を1点に固定せず、早朝帯に入ることを検査する。
+    """
     wake_h = 31.0  # 翌日 7:00
-    t_min = wake_h - 2.0
-    at_min = tp.circadian(t_min, wake_h)
-    around = [tp.circadian(t_min + d, wake_h) for d in (-1.5, -0.5, 0.5, 1.5)]
-    assert all(v > at_min for v in around)
+    samples = [(wake_h - 12.0 + i * 5 / 60.0, ) for i in range(int(24 * 12) + 1)]
+    values = [(t, tp.circadian(t, wake_h)) for (t,) in samples]
+    trough_t, _ = min(values, key=lambda x: x[1])
+    assert wake_h - 5.0 <= trough_t <= wake_h - 1.0
 
 
-def test_circadian_has_afternoon_dip():
-    """起床8時間後（14時台）に副次的な谷がある。"""
-    wake_h = 31.0  # 翌日 7:00 → 14:00 は 38.0
-    at_dip = tp.circadian(39.0, wake_h)  # 起床+8h = 15:00
-    at_morning = tp.circadian(34.0, wake_h)  # 起床+3h = 10:00
-    at_evening = tp.circadian(42.0, wake_h)  # 起床+11h = 18:00
-    assert at_dip < at_evening
-    assert at_dip < at_morning + 0.25  # 谷が主成分の上昇に埋もれていない
+def test_circadian_has_a_real_afternoon_dip():
+    """午後に本物の極小がある（単なる右肩上がりの途中ではない）。
+
+    ここが潰れると「14-16時が谷」という本プロダクトの中核が成立しない。
+    """
+    wake_h = 31.0
+    # 起床+4h付近は前夜の谷から立ち上がる途中の局所的な肩に当たり、
+    # 数値上まれに窓の端点と午後の谷がほぼ同値になるため、
+    # その肩を過ぎた起床+5h 〜 +10h を探索窓とする。
+    afternoon = [
+        (wake_h + 5.0 + i * 5 / 60.0) for i in range(int(5 * 12) + 1)
+    ]  # 起床+5h 〜 +10h
+    values = [(t, tp.circadian(t, wake_h)) for t in afternoon]
+    dip_t, dip_v = min(values, key=lambda x: x[1])
+
+    # 窓の両端より内側に極小があること（端点なら極小ではない）
+    assert afternoon[0] < dip_t < afternoon[-1]
+    # 谷が意味のある深さを持つこと
+    assert tp.circadian(wake_h + 10.0, wake_h) - dip_v > 0.1

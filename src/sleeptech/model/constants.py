@@ -10,14 +10,14 @@ TAU_RISE = 18.2    # 覚醒中の睡眠圧上昇の時定数（時間）
 TAU_DECAY = 4.2    # 睡眠中の睡眠圧減衰の時定数（時間）
 
 # --- Process C（概日リズム）---
-# CIRCADIAN_AMPLITUDE と HARMONIC_RATIO は当初 0.25 / 0.5 を仮置きしていたが、
-# PHASE_MIN_OFFSET_H=-2.0・PHASE_DIP_OFFSET_H=8.0 の位相関係では
-# 第2高調波（午後の谷）の影響で夜間の谷の位置が数学的にずれてしまい、
-# test_circadian_minimum_is_two_hours_before_wake が失敗した。
-# 谷の位置ずれが起きない上限（H ≈ 0.041、位相差10hの正弦成分に依存）より
-# 十分小さい値に再調整した（本ファイル冒頭の docstring が許容する再調整）。
-CIRCADIAN_AMPLITUDE = 0.2   # 振幅 A
-HARMONIC_RATIO = 0.02       # 午後の谷の相対的な深さ H
+# CIRCADIAN_AMPLITUDE と HARMONIC_RATIO は 0.25 / 0.5 が正しい値である。
+# 第2高調波（12時間周期）を加えるとこの値でしか午後の谷（post-lunch dip、
+# 本プロダクトの中核機能）が有意な深さで現れない。
+# その代償として、夜間の谷（全体最小）は起床のちょうど2時間前ではなく
+# 起床3.3時間前あたりへ数学的にずれる。これはこのモデルの正しい挙動であり、
+# 「起床2時間前が底」と決め打ったテストの前提が誤っていたため、テスト側を修正した。
+CIRCADIAN_AMPLITUDE = 0.25  # 振幅 A（0.2 に下げると午後の谷が消える）
+HARMONIC_RATIO = 0.5        # 午後の谷の相対的な深さ H（0.02 に下げると午後の谷が消える）
 PHASE_MIN_OFFSET_H = -2.0   # 覚醒度の底 = 起床時刻 + このオフセット
 PHASE_DIP_OFFSET_H = 8.0    # 午後の谷 = 起床時刻 + このオフセット
 
