@@ -22,3 +22,28 @@ class SleepInput:
     def duration_h(self) -> float:
         """睡眠時間（時間）。"""
         return self.wake_h - self.bedtime_h
+
+
+@dataclass(frozen=True)
+class Baseline:
+    """直近履歴から算出した個人の平常時。
+
+    is_default=True は履歴が不足しており既定値を使ったことを表す。
+    このときメッセージに「まだデータが少ない」旨を含める必要がある。
+    """
+
+    wake_h: float
+    sleep_h: float
+    rem_min: float | None = None
+    deep_min: float | None = None
+    days_used: int = 0
+    is_default: bool = False
+
+
+@dataclass(frozen=True)
+class HourlyDrop:
+    """ある時刻におけるパフォーマンス低下率（%、0以上の整数）。"""
+
+    hour: int        # 起床日の時刻（0-23）
+    focus_pct: int   # 集中力
+    mood_pct: int    # 気分
