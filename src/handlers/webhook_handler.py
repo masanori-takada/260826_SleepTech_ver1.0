@@ -50,25 +50,34 @@ def resolve_feedback_date(memory, today: str) -> str | None:
 def _texts(event) -> list[str]:
     """Webhook イベントからテキストメッセージ本文を取り出す。
 
-    body が JSON 配列だったり events がリストでない、要素が dict でない
-    等、想定外の構造の場合は例外を投げず空リストを返す（Lambda 全体を
-    クラッシュさせないため）。
+    top-level/body/events/message の型を検査し、不正なeventだけを捨てる。
+    1件の不正入力で同じbatch内の正常メッセージまで失わない。
     """
+    if not isinstance(event, dict):
+        return []
     try:
         body = json.loads(event.get("body") or "{}")
-        events = body.get("events", [])
-        if not isinstance(events, list):
-            return []
-        out = []
-        for ev in events:
-            if not isinstance(ev, dict):
-                continue
-            msg = ev.get("message") or {}
-            if ev.get("type") == "message" and msg.get("type") == "text":
-                out.append(msg.get("text", ""))
-        return out
     except (TypeError, ValueError, AttributeError):
         return []
+
+    if not isinstance(body, dict):
+        return []
+    events = body.get("events", [])
+    if not isinstance(events, list):
+        return []
+
+    out: list[str] = []
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        msg = ev.get("message")
+        if not isinstance(msg, dict):
+            continue
+        if ev.get("type") == "message" and msg.get("type") == "text":
+            text = msg.get("text")
+            if isinstance(text, str):
+                out.append(text)
+    return out
 
 
 def handler(event, context=None) -> dict:
