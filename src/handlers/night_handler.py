@@ -14,8 +14,11 @@ def handler(event, context=None) -> dict:
     event = event or {}
     settings = load_settings()
     now = hd.jst_now()
-    date = event.get("date") or hd.origin_date(now)
+    # 起点日と now_h は同じ判定（night=True）から導く。片方だけ直すと
+    # 0:00 を越えて実行されたときに不整合になる（起点日は前日なのに
+    # now_h が前日 0:00 からの経過時間になっていない、等）。
+    date = event.get("date") or hd.origin_date(now, night=True)
     current_h = event.get("now_h")
     if current_h is None:
-        current_h = hd.now_h(now)
+        current_h = hd.now_h(now, night=True)
     return run_night(date, float(current_h), hd.build_night_deps(settings))

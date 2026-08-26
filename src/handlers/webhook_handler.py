@@ -23,6 +23,8 @@ from sleeptech.workflow.morning import run_morning
 from src.handlers import deps as hd
 
 _WAKEUP_RE = re.compile(r"^(おはよう(ございます)?|起きた|おきた|データ更新|同期|計測)$")
+# range(FEEDBACK_LOOKBACK_DAYS) で「当日」と「前日」の2日分のみを見る
+# （2日前は見ない）。定数名は「遡る日数」ではなく「見る日数」を表す。
 FEEDBACK_LOOKBACK_DAYS = 2
 
 
@@ -32,7 +34,11 @@ def is_wakeup_trigger(text: str) -> bool:
 
 
 def resolve_feedback_date(memory, today: str) -> str | None:
-    """回答を紐付ける日付を返す。直近の未回答の夜予測を最大2日分遡って探す。"""
+    """回答を紐付ける日付を返す。
+
+    直近の未回答の夜予測を、当日と前日の2日分のみ見て探す
+    （FEEDBACK_LOOKBACK_DAYS=2 の range(2) のため、2日前は見ない）。
+    """
     base = date_cls.fromisoformat(today)
     for i in range(FEEDBACK_LOOKBACK_DAYS):
         d = (base - timedelta(days=i)).isoformat()
@@ -42,17 +48,27 @@ def resolve_feedback_date(memory, today: str) -> str | None:
 
 
 def _texts(event) -> list[str]:
-    """Webhook イベントからテキストメッセージ本文を取り出す。"""
+    """Webhook イベントからテキストメッセージ本文を取り出す。
+
+    body が JSON 配列だったり events がリストでない、要素が dict でない
+    等、想定外の構造の場合は例外を投げず空リストを返す（Lambda 全体を
+    クラッシュさせないため）。
+    """
     try:
         body = json.loads(event.get("body") or "{}")
-    except (TypeError, ValueError):
+        events = body.get("events", [])
+        if not isinstance(events, list):
+            return []
+        out = []
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            msg = ev.get("message") or {}
+            if ev.get("type") == "message" and msg.get("type") == "text":
+                out.append(msg.get("text", ""))
+        return out
+    except (TypeError, ValueError, AttributeError):
         return []
-    out = []
-    for ev in body.get("events", []):
-        msg = ev.get("message") or {}
-        if ev.get("type") == "message" and msg.get("type") == "text":
-            out.append(msg.get("text", ""))
-    return out
 
 
 def handler(event, context=None) -> dict:

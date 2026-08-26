@@ -41,6 +41,54 @@ def test_now_h_converts_to_elapsed_hours():
     assert hd.now_h(now) == 22.5
 
 
+def test_night_origin_date_at_2230_is_today():
+    """22:30 起動: 起点日は当日、now_h はそのまま。"""
+    now = datetime(2026, 8, 26, 22, 30, tzinfo=JST)
+    assert hd.origin_date(now, night=True) == "2026-08-26"
+    assert hd.now_h(now, night=True) == 22.5
+
+
+def test_night_origin_date_at_0030_rolls_back_to_previous_day():
+    """0:30 起動（深夜にずれ込んだ場合）: 起点日は前日、now_h は 24.5。"""
+    now = datetime(2026, 8, 27, 0, 30, tzinfo=JST)
+    assert hd.origin_date(now, night=True) == "2026-08-26"
+    assert hd.now_h(now, night=True) == 24.5
+
+
+def test_night_origin_date_at_0359_rolls_back_to_previous_day():
+    """3:59 起動（区切り直前）: 起点日は前日、now_h は約 27.983。"""
+    now = datetime(2026, 8, 27, 3, 59, tzinfo=JST)
+    assert hd.origin_date(now, night=True) == "2026-08-26"
+    assert hd.now_h(now, night=True) == pytest.approx(27.9833, abs=1e-3)
+
+
+def test_night_origin_date_at_0400_is_boundary_today():
+    """4:00 起動（区切りちょうど）: 起点日は当日、now_h は 4.0。"""
+    now = datetime(2026, 8, 27, 4, 0, tzinfo=JST)
+    assert hd.origin_date(now, night=True) == "2026-08-27"
+    assert hd.now_h(now, night=True) == 4.0
+
+
+def test_night_origin_date_across_month_boundary():
+    """月初またぎ: 9/1 0:30 起動の起点日は 8/31。"""
+    now = datetime(2026, 9, 1, 0, 30, tzinfo=JST)
+    assert hd.origin_date(now, night=True) == "2026-08-31"
+
+
+def test_night_and_morning_use_same_date_normal_case():
+    """回帰: 8/26 22:30 の夜と 8/27 8:00 の朝が同じ date を使う。"""
+    night_now = datetime(2026, 8, 26, 22, 30, tzinfo=JST)
+    morning_now = datetime(2026, 8, 27, 8, 0, tzinfo=JST)
+    assert hd.origin_date(night_now, night=True) == hd.origin_date(morning_now, morning=True) == "2026-08-26"
+
+
+def test_night_and_morning_use_same_date_when_night_rolls_over_midnight():
+    """回帰: 深夜にずれ込んだ夜（8/27 0:30）でも朝（8/27 8:00）と同じ date になる。"""
+    night_now = datetime(2026, 8, 27, 0, 30, tzinfo=JST)
+    morning_now = datetime(2026, 8, 27, 8, 0, tzinfo=JST)
+    assert hd.origin_date(night_now, night=True) == hd.origin_date(morning_now, morning=True) == "2026-08-26"
+
+
 def test_feedback_binds_to_the_latest_unanswered_night_prediction():
     """回答は直近の未回答 PREDICT#NIGHT に紐付ける。"""
     m = MemoryClient(InMemoryBackend())
@@ -77,3 +125,33 @@ def test_feedback_skips_already_answered_days():
 def test_feedback_returns_none_when_no_prediction_exists():
     m = MemoryClient(InMemoryBackend())
     assert wh.resolve_feedback_date(m, today="2026-08-26") is None
+
+
+def test_feedback_does_not_bind_when_prediction_only_two_days_ago():
+    """ちょうど2日前にのみ夜予測がある場合は None（2日前は見ない）。"""
+    m = MemoryClient(InMemoryBackend())
+    m.save_prediction(Prediction(date="2026-08-24", slot="NIGHT"))
+    assert wh.resolve_feedback_date(m, today="2026-08-26") is None
+
+
+
+# 「前日にのみ夜予測がある場合に前日を返す」ケースは
+# test_feedback_falls_back_to_previous_day で既にカバーされているため重複させない。
+
+
+def test_texts_returns_empty_list_when_body_is_json_array():
+    """body が JSON 配列（\"[]\"）でも例外にならず空リストを返す。"""
+    event = {"body": "[]"}
+    assert wh._texts(event) == []
+
+
+def test_texts_returns_empty_list_when_events_is_not_a_list():
+    """events がリストでなくても例外にならず空リストを返す。"""
+    event = {"body": '{"events": "not a list"}'}
+    assert wh._texts(event) == []
+
+
+def test_texts_returns_empty_list_when_event_items_are_not_dicts():
+    """events の要素が dict でなくても例外にならず空リストを返す。"""
+    event = {"body": '{"events": [1, 2]}'}
+    assert wh._texts(event) == []

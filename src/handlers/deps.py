@@ -2,6 +2,14 @@
 
 起点日の決め方に注意する。夜 22:30 の起点日は今日だが、
 朝 8:00 の起点日は前日である（前夜のメッセージと同じ日付にするため）。
+
+さらに、夜フロー（EventBridge 22:30 JST 起動）は Lambda のリトライ・
+スロットリング・コールドスタート遅延によって 0:00 を越えて実行される
+ことがある。そのため夜フローには「その夜の区切り時刻」
+（NIGHT_ROLLOVER_HOUR）を導入し、区切り前は「前日の夜の続き」として
+扱う。区切りを 4 時にしているのは、推奨就寝時刻の探索区間の終端が
+「起床の4時間前」であり、常識的な起床時刻（6〜9時）を考えると
+4 時より後に夜フローが走ることは想定されないため。
 """
 
 from __future__ import annotations
@@ -11,19 +19,42 @@ from datetime import datetime, timedelta, timezone
 
 JST = timezone(timedelta(hours=9))
 
+# 夜フローの区切り時刻（JST）。この時刻未満は「前日の夜」の続きとみなす。
+# 理由: 推奨就寝時刻の探索区間の終端は「起床の4時間前」であり、常識的な
+# 起床時刻（6〜9時）を考えると 4 時より後に夜フローが走ることは想定され
+# ないため。
+NIGHT_ROLLOVER_HOUR = 4
+
 
 def jst_now() -> datetime:
     return datetime.now(JST)
 
 
-def origin_date(now: datetime, morning: bool = False) -> str:
-    """起点日を返す。morning=True のときは前日。"""
-    d = now.date() - timedelta(days=1) if morning else now.date()
+def origin_date(now: datetime, morning: bool = False, night: bool = False) -> str:
+    """起点日を返す。
+
+    morning=True のときは前日（朝フローの挙動は変更しない）。
+    night=True のときは、NIGHT_ROLLOVER_HOUR より前なら「前日の夜」の
+    続きとみなして前日を返す（0:00 を越えて実行された場合の救済）。
+    """
+    if morning:
+        d = now.date() - timedelta(days=1)
+    elif night and now.hour < NIGHT_ROLLOVER_HOUR:
+        d = now.date() - timedelta(days=1)
+    else:
+        d = now.date()
     return d.isoformat()
 
 
-def now_h(now: datetime) -> float:
-    """起点日 0:00 からの経過時間（時）。"""
+def now_h(now: datetime, night: bool = False) -> float:
+    """起点日 0:00 からの経過時間（時）。
+
+    night=True のときは、NIGHT_ROLLOVER_HOUR より前なら「前日 0:00 から
+    の経過時間」として 24.0 を加算する（origin_date(night=True) が返す
+    起点日と整合させるため）。
+    """
+    if night and now.hour < NIGHT_ROLLOVER_HOUR:
+        return round(now.hour + now.minute / 60.0 + 24.0, 4)
     return round(now.hour + now.minute / 60.0, 4)
 
 
