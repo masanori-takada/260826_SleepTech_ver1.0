@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 
-from sleeptech.memory.schemas import Baseline, HourlyDrop, SleepInput
+from sleeptech.memory.schemas import Baseline, BedtimeAdvice, HourlyDrop, SleepInput
 from sleeptech.model import constants as C
 
 
@@ -138,3 +138,71 @@ def mean_drop_in_main_window(curve: list[HourlyDrop], wake_h: float) -> float:
         # 通常運用では CURVE_HOURS(16) > end_idx(10) のため発生しない。
         picked = [d.focus_pct for d in curve]
     return sum(picked) / len(picked)
+
+
+def predict_curve_from_bedtime(
+    bedtime_h: float,
+    baseline: Baseline,
+    debt_h: float,
+    rem_min: float | None = None,
+    deep_min: float | None = None,
+) -> list[HourlyDrop]:
+    """就寝時刻を指定して予測カーブを得る（起床時刻は baseline に従う）。"""
+    sleep = SleepInput(
+        bedtime_h=bedtime_h,
+        wake_h=baseline.wake_h,
+        rem_min=rem_min if rem_min is not None else baseline.rem_min,
+        deep_min=deep_min if deep_min is not None else baseline.deep_min,
+    )
+    return predict_curve(sleep, baseline, debt_h)
+
+
+def recommend_bedtime(
+    now_h: float,
+    baseline: Baseline,
+    debt_h: float,
+    rem_min: float | None = None,
+    deep_min: float | None = None,
+) -> BedtimeAdvice:
+    """閾値を満たす最も遅い就寝時刻を線形スキャンで求める。
+
+    探索区間は [now_h, baseline.wake_h - MIN_SLEEP_BEFORE_WAKE_H]。
+    低下率は就寝時刻に対して単調ではない（Process C の位相との相互作用で
+    局所的に逆転しうる）ため、二分探索は使わず SCAN_STEP_MIN 刻みの
+    線形スキャンで全候補を評価する。
+
+    浮動小数点の累積誤差を避けるため、候補時刻は now_h + i * step_h という
+    インデックスからの算出で求める（t += step_h の繰り返しは使わない）。
+    """
+    limit_h = baseline.wake_h - C.MIN_SLEEP_BEFORE_WAKE_H
+
+    def _evaluate(t: float) -> tuple[list[HourlyDrop], float]:
+        curve = predict_curve_from_bedtime(t, baseline, debt_h, rem_min, deep_min)
+        return curve, mean_drop_in_main_window(curve, baseline.wake_h)
+
+    # 既に探索区間の終端を過ぎている → 今すぐ寝るべき
+    if now_h >= limit_h:
+        curve, mean = _evaluate(now_h)
+        return BedtimeAdvice(now_h, round(mean), curve, "too_late")
+
+    step_h = C.SCAN_STEP_MIN / 60.0
+    span_h = limit_h - now_h
+    n_steps = int(span_h / step_h + 1e-9)  # now_h から limit_h までの刻み数
+
+    candidates: list[tuple[float, float, list[HourlyDrop]]] = []
+    for i in range(n_steps + 1):
+        t = now_h + i * step_h
+        curve, mean = _evaluate(t)
+        candidates.append((t, mean, curve))
+
+    # 過小睡眠を勧めないため、平常時睡眠時間を確保できる時刻を上限とする
+    comfortable_h = baseline.wake_h - baseline.sleep_h
+    passing = [c for c in candidates if c[1] <= C.TARGET_DROP_PCT]
+    if passing:
+        eligible = [c for c in passing if c[0] <= comfortable_h] or passing
+        best = max(eligible, key=lambda c: c[0])
+        return BedtimeAdvice(round(best[0], 3), round(best[1]), best[2], "ok")
+
+    # 閾値に届かない → 低下率が最小の時刻を返す
+    best = min(candidates, key=lambda c: (c[1], c[0]))
+    return BedtimeAdvice(round(best[0], 3), round(best[1]), best[2], "unreachable")

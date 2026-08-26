@@ -55,3 +55,19 @@ class HourlyDrop:
     hour: int        # 起床日の時刻（0-23）
     focus_pct: int   # 集中力
     mood_pct: int    # 気分
+
+
+@dataclass(frozen=True)
+class BedtimeAdvice:
+    """夜フローが算出する推奨就寝時刻とその根拠。
+
+    status:
+      "ok"          — 閾値を満たす就寝時刻が見つかった
+      "unreachable" — どんなに早く寝ても閾値に届かない（最善時刻を返す）
+      "too_late"    — 既に探索区間の終端を過ぎている（今すぐ寝るべき）
+    """
+
+    bedtime_h: float
+    mean_drop_pct: int
+    curve: list[HourlyDrop]
+    status: str
