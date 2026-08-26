@@ -1,0 +1,109 @@
+# SDD ledger — plan: docs/superpowers/plans/2026-08-26-sleep-performance-line-advisor.md
+
+- Spec: docs/superpowers/specs/2026-08-26-sleep-performance-line-advisor-design.md
+- Branch: claude/sleep-performance-line-advisor-9b2642
+- Resumed under superpowers 6.3.0 on 2026-08-26; migrated artifacts from the legacy flat `.superpowers/sdd/` workspace without deleting the legacy files.
+- Model ruling: implementation agents use `gpt-5.6-luna` at medium effort; task and final reviewers use `gpt-5.6-sol` at medium effort, per user instruction.
+- Plugin ruling: use Playwright MCP only when a browser/UI surface exists to exercise. Tasks 1–16 are Python/AWS/LINE API code without a local browser UI, so unit/integration/CDK tests are the relevant verification. Reassess at Task 17.
+
+- Task 1: complete (commits 0c24982..a9cfee9, review clean)
+  - Carry-forward: `infra/app.py` still imports the old stack; Task 16 replaces it. `requirements.txt` still contains old dependencies; Task 16 cleans it.
+- Task 2: complete (commits a9cfee9..2704db8, review clean)
+  - Plan test asserting the global circadian minimum exactly two hours before wake was mathematically invalid once the second harmonic is present; replaced with early-morning trough and real-afternoon-dip tests.
+  - Constants remain A=0.25 / H=0.5. Measured afternoon dip is around 13:00 with depth 0.179.
+  - Minor (deferred): test comment calls the +4h equality a “shoulder”; the numeric reality is a tie with the true +6h dip.
+  - Minor (deferred): early-morning trough test allows a four-hour window and may miss future constant regressions.
+- Task 3: complete (commits 2704db8..8ebc484, review clean after one fix round)
+  - Fixed `mean_drop_in_main_window` crossing midnight by slicing relative curve indices instead of comparing modulo-24 clock hours.
+  - Measured drops at wake=31, baseline=7.5h, debt=0: 5h sleep → 10:00 20% / 14:00 22%; 6h → 10% / 12%; 7.5h → 0% / 0%.
+  - Minor (deferred): at 7h sleep, integer rounding makes morning and afternoon both 3% despite raw values 2.88% and 3.44%.
+  - Minor (deferred): `mean_drop_in_main_window` retains an unused `wake_h` argument for signature compatibility.
+- Task 4: complete (commits 8ebc484..28ffac6, review clean)
+  - Corrected plan test expectation from 7.5h to 8.0h; median([8.0, 8.0, 6.5]) is 8.0.
+- Task 5: implementation complete, review pending (commit 6c23c45; 36 tests passing on resume)
+  - Ruling: changed the unreachable test input from now=22.5 to now=24.5. With S0_MAX clamping and overnight decay, now=22.5 remains below the 10% target even at 1000h debt, so it cannot exercise `unreachable`. Cost if wrong: the boundary test may encode a later current-time assumption than product usage, but the status branch is genuinely exercised without changing model constants.
+  - Independent resume verification: debt=30 gives `ok` at now=22.5 (9%), `unreachable` at now=24.5 (19%), and `too_late` at now=27.0+; bedtime delay curve is monotone (23:30→0%, 24:30→6.67%, 25:30→15.33%, 26:30→26.33%).
+  - Minor (deferred): unreachable-best-candidate test compares only one later point and does not fully lock non-monotonic or equal-minimum selection behavior.
+- Task 5: fix round 1/5 (1 addressed, 0 open — public drop now uses `ceil` so threshold status and displayed integer agree; commits 6c23c45..21c059f)
+- Task 5: complete (commits 28ffac6..21c059f, review clean after one fix round)
+- Task 6: Ruling: the plan's two recovery test scenarios contradict the binding spec and its own implementation formula. Keep the spec's 5h half-life, 25% bedtime ratio, and >8h split threshold; change only the scenario inputs so a two-dose case has cutoff-wake >8h and a one-dose case has first<=cutoff with cutoff-wake<=8h. Cost if wrong: typical 23:30 bedtime will receive one caffeine recommendation rather than the early brainstorm's two-dose example, but it preserves the later approved safety threshold and no-dose-after-cutoff invariant.
+- Task 6: Ruling: where Task 6's Interface says `RecoveryPlan.caffeine_times_h: list[float]` but its Step 3 code says bare `list`, the public Interface wins. Add the element type and a contract test. Cost if wrong: none at runtime; it only narrows static/runtime annotation introspection to the intended float elements.
+- Task 6: fix round 1/5 (test scenarios corrected to satisfy the binding caffeine formula; commits 3fad729..526cdb9)
+- Task 6: fix round 2/5 (public `list[float]` contract restored; commits 526cdb9..be3317b)
+- Task 6: complete (commits 21c059f..be3317b, review clean after two fix rounds; 48 tests passing)
+- Task 7: Ruling: `47.5h` is one day plus 23.5h, so it must render `翌 23:30`, not `翌々 23:30`. Use `_split()`'s quotient as the day count; add `48.0 -> 翌々 0:00` to lock the real two-day boundary. Cost if wrong: messages around 47.5h would otherwise claim a date one day too late, including the next-night recovery bedtime.
+- Task 7: fix round 1/5 (half-up minute rounding replaces Python banker's rounding; commits cdc7153..20301c3)
+- Task 7: complete (commits be3317b..20301c3, review clean after one fix round; 71 tests passing)
+- Task 8: fix round 1/5 (atomic idempotency, Vital-only TTL, and descending-query pagination fixed; commits 8fb10da..1c14bf2)
+- Task 8: fix round 2/5 (restored injected backend `put(pk, sk, value)` contract; commits 1c14bf2..7cd19a7)
+- Task 8: complete (commits 20301c3..7cd19a7, review clean after two fix rounds; 91 tests passing)
+- Task 9: fix round 1/5 (six semantic guardrail defects fixed; commits 8a6b5cf..bdfca51)
+- Task 9: fix round 2/5 (all legacy personal-attack patterns restored; commits bdfca51..017d810)
+- Task 9: complete (commits 7cd19a7..017d810, review clean after two fix rounds; 153 tests passing)
+- Tasks 10-14: implemented and present in git history before resume; detailed legacy reports were not preserved. Task 15 review uses `435e20f` (Task 14 reviewed head) as its base.
+- Task 15: Ruling: scheduled night invocations must carry `date` and `now_h` as an all-or-nothing pair; partial overrides return a client error instead of mixing origins. Task 16 must configure the scheduler payload with both values. Cost if wrong: manual invocations that previously supplied only one field will fail fast and must be updated.
+- Task 15: Ruling: wall-clock fallback remains best-effort for direct/manual invocation, while delayed/retried EventBridge correctness comes from the explicit scheduled payload. Cost if wrong: a direct invocation after 04:00 without payload can still choose the calendar day rather than the intended prior schedule day; production EventBridge will not use that path.
+- Task 15: fix round 1/5 (paired overrides and malformed webhook event isolation; commits 76d7ee6..72abef8)
+- Task 15: complete (commits 435e20f..72abef8, recovered review clean after one fix round; 272 tests passing)
+- Task 16 carry-forward: configure the night scheduler to invoke with both `date` and `now_h`; never one without the other.
+- Task 15: Ruling update: production Scheduler uses `{"scheduled_time":"<aws.scheduler.scheduled-time>"}` rather than a static date/now_h pair, because Scheduler can substitute the planned invocation timestamp but cannot format a dynamic date field. Task 15 derives both values from this one timestamp. Cost if wrong: depends on AWS preserving the documented scheduled-time context substitution; manual pair input remains available as fallback.
+- Task 15: fix round 2/5 (scheduled-time origin derivation; commits 72abef8..8ff1ea3)
+- Task 15: fix round 3/5 (strict event key sets; commits 8ff1ea3..9663406)
+- Task 15: complete (commits 435e20f..9663406, recovered review clean after three fix rounds; 285 tests passing)
+- Task 16 carry-forward superseded: night Scheduler must send `scheduled_time` context payload, not a static date/now_h pair.
+
+- Task 16: complete (commits 9663406..ef9f55f, review clean after three fix rounds; 305 tests; CDK synth successful)
+  - Round 1: fixed asset root, least-privilege IAM, added infrastructure tests, and pinned CDK dependencies.
+  - Round 2: excluded development assets and added the Task 17 public-release signature gate.
+  - Round 3: corrected documentation consistency across the report and Task 17 plan.
+  - Task 17 carry-forward: implement LINE raw-body HMAC-SHA256 signature verification with `channel_secret`; missing signature returns 401, mismatched signature returns 403, and verification must pass before deploy.
+
+- Task 17 public-release signature gate: implementation complete in working tree; commit pending.
+  - Added raw-body HMAC-SHA256 verification for Function URL payload v2, including base64 body decoding, case-insensitive headers, and safe single-value `multiValueHeaders` handling.
+  - Missing signature returns 401; mismatched signature returns 403; malformed body/base64/event metadata returns 400 before domain processing.
+  - `channel_secret` is read from the existing `sleeptech/line` Secrets Manager JSON; `channel_access_token` and `user_id` contracts remain unchanged.
+  - Verification: `python -m pytest -q` passed 315 tests; `git diff --check` passed.
+  - AWS deploy, Secrets registration, external API calls, LINE real-device verification, and old Scheduler stop were not performed. Remaining Task 17 work is blocked on credentials, user approval, and external state.
+
+- Task 17: local security gate complete (commits 21f31de..4e6ca86, review clean after one fix round).
+  - Round 1: malformed signatures return 403; malformed signed JSON/payload contract returns 400; `events: []` returns 200; raw-body regression tests cover formatting, escaping, emoji, and one-byte mutation; report corrected.
+  - Controller fresh verification: `python -m pytest -q` = 326 passed; `git diff --check` succeeded; `cdk synth SleepTechStack` exited 0.
+  - Remaining external/manual work: Secrets registration including `channel_secret`, `cdk diff/deploy`, LINE Webhook configuration, night/morning/LINE real-device verification, and stopping the existing NightRamen Scheduler. User credentials and explicit confirmation are required before these actions.
+  - Playwright is not applicable: no browser UI is under local control; LINE Developers console and manual device steps remain user/external work.
+
+- 最終ブランチレビュー2回目 完了: Critical 3 / Important 8 / Minor 多数。
+  指摘一覧は final-review-findings.md に保存。C1・C3 は controller が実機検証で確認済み。
+  判定: Critical 3件を直し I3 を実機確認してからデプロイ。
+
+## 出荷前修正（最終レビュー2回目の指摘対応）
+
+- 第1波 47add96: C1 / C2 / C3 / I6 / I8 + Minor2件
+  - C1: status / lease_until をトップレベル属性にミラー。moto による実条件評価テストを追加
+  - C2: scheduled_time の解釈に防御を追加（当初は壁時計との乖離7時間超でフォールバック）
+  - C3: to_sleep_input が total_sleep_min を優先。baseline.sleep_h も同定義に統一
+    断片化睡眠（実睡眠6h・床上8h）が -0% → 10時-10%/14時-12% に是正
+  - I6: recommend_bedtime に閾値を引数化し STC_TARGET_DROP_PCT を有効化
+  - I8: 仕様 第5節の期待出力表を実測値に更新（元の「約-7%」は未検証の手計算だった）
+- 第2波 d2b383b: I1 / I2 / I3 / I4 / I5 / I7 + Minor3件
+  - I3: Retry-Key を決定論的 UUID v4 形状に（LINE 仕様は v4。検証されると全 push が 400 だった）
+  - I1: HTTP timeout 20→4秒、collectors に deadline 伝播。最悪 140秒超 → 28秒
+  - I5: MSG#NIGHT / MSG#MORNING の保存を実装（仕様 第9節）
+- 第3波 28492e7: 最終確認レビューの New-1 / New-2 + M1〜M6
+  - **New-1（第1波が入れた退行）**: 閾値7時間は長時間リトライも誤検出し、正しい scheduled_time を
+    捨てて壁時計に落ちていた。朝6時に夜メッセージを送り、IDEM を先食いして本来の夜メッセージが
+    無言消滅する経路。→ 判定を「壁時計との乖離量」から「scheduled_time 自体の形」へ変更
+    （naive 値を JST と読んで cron 予定時刻に一致するかで判定）。壁時計に一切依存しなくなった
+  - New-2: MorningSchedule にも scheduled_time を渡し、両 Scheduler に RetryPolicy を明示
+    （maximum_event_age=3600s / max_attempts=5）。日跨ぎリトライ自体を起こさせない
+  - M1〜M6: too_late/unreachable の -0%、Message.delivered/regen_count、status ミラーの漏れ、
+    boto3 タイムアウト、未使用 Settings 削除、CDK env=
+
+- 判断して手を付けなかったもの:
+  - New-5: allowed_times にカーブ時刻を足したことによる捏造検出力の低下は許容。
+    必須の4時刻は依然として全て本文に必要で、カーブ時刻は自前データ由来のため
+  - New-11: I8 の仕様表更新は「実装に合わせた」のではなく「未検証の手計算を実測に置換した」もの
+  - デッドコード削除（query_desc / to_h / _texts）: 出荷直前の churn を避けて見送り
+
+- **最終状態: 387 tests passing / cdk synth 成功 / Critical 0**
+- 残りは外部作業のみ（AWS デプロイ、Secrets 登録、LINE チャネル作成と Webhook 設定、
+  実機確認、既存 NightRamen Scheduler の停止）。利用者の認証情報と明示的な承認が必要

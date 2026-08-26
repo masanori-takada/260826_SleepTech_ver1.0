@@ -1,212 +1,249 @@
-"""LINE Webhook ハンドラ（自己申告取り込み ＋ 対話エージェント / FR-002, FR-101〜112, Feature 003）。
+"""LINE Webhook Lambda。
 
-Lambda Function URL（公開HTTPS）で LINE メッセージを受け取り:
- 1. 署名検証（FR-108）
- 2. 自己申告抽出（固定パース＋会話抽出の併用, FR-105）→ DynamoDB REPORT 保存
- 2.5 起床トリガー（「おはよう」等）なら 8 時を待たず当日バイタルを先行収集（Feature 003 / FR-003）
- 3. 健康コーチ会話エージェントで応答生成（LTM/STM/バイタル/目標を文脈, FR-101,104）
- 4. **ガードレール検証**（送信前必須, FR-106）
- 5. LINE 返信 ＋ 会話ターンを agentcore Memory へ保存（FR-102,103）
+役割は2つ。
+1. 起床トリガー（「おはよう」等）を検出したら run_morning を前倒し実行する
+   （収集だけでなく送信まで行う。冪等は run_morning が担保する）
+2. クイックリプライの回答（評価:N）を直近の未回答の夜予測に紐付けて保存する
 
-NRB_MEMORY_ID 未設定時は記憶機能を無効化し、会話のみ（degrade）。
+どちらでもないメッセージは何もしない（ver1.0 に会話機能は無い）。
 """
 
 from __future__ import annotations
 
 import base64
+import binascii
+import hashlib
+import hmac
 import json
-from datetime import datetime, timedelta, timezone
+import re
+from collections.abc import Mapping
+from datetime import date as date_cls
+from datetime import timedelta
 
-from night_ramen.config import load_settings
-from night_ramen.observability import StructuredLogger
+from sleeptech.config import load_settings
+from sleeptech.memory.schemas import Feedback
+from sleeptech.notifier.line import parse_feedback
+from sleeptech.observability import StructuredLogger
+from sleeptech.workflow.morning import run_morning
+from src.handlers import deps as hd
 
-
-def _today_jst() -> str:
-    return datetime.now(timezone(timedelta(hours=9))).date().isoformat()
-
-
-def _line_secret(settings) -> dict:
-    import boto3
-
-    sm = boto3.client("secretsmanager", region_name=settings.region)
-    return json.loads(sm.get_secret_value(SecretId=settings.secret_line)["SecretString"])
-
-
-def _load_goal(settings):
-    import boto3
-
-    from night_ramen.memory.schemas import Goal
-
-    try:
-        table = boto3.resource("dynamodb", region_name=settings.region).Table(settings.dynamodb_table)
-        item = table.get_item(Key={"PK": "GOAL", "SK": "current"}).get("Item")
-    except Exception:  # noqa: BLE001
-        item = None
-    if not item:
-        return Goal(
-            success_rate_target=settings.default_success_rate_target,
-            weight_loss_target_kg=settings.default_weight_loss_target_kg,
-        )
-    return Goal(
-        success_rate_target=float(item.get("success_rate_target", settings.default_success_rate_target)),
-        weight_loss_target_kg=float(item.get("weight_loss_target_kg", settings.default_weight_loss_target_kg)),
-    )
+_WAKEUP_RE = re.compile(r"^(おはよう(ございます)?|起きた|おきた|データ更新|同期|計測)$")
+# range(FEEDBACK_LOOKBACK_DAYS) で「当日」と「前日」の2日分のみを見る
+# （2日前は見ない）。定数名は「遡る日数」ではなく「見る日数」を表す。
+FEEDBACK_LOOKBACK_DAYS = 2
 
 
-def _raw_body(event: dict) -> bytes:
-    body = event.get("body") or ""
-    if event.get("isBase64Encoded"):
-        return base64.b64decode(body)
+def _response(status_code: int, error: str) -> dict:
+    """Function URL向けのエラーレスポンスを作る。"""
+    return {"statusCode": status_code, "body": json.dumps({"error": error})}
+
+
+def _header(event: dict, name: str) -> object | None:
+    """通常ヘッダーと複数値ヘッダーから値を大文字小文字非依存で得る。"""
+    target = name.casefold()
+    headers = event.get("headers")
+    if not isinstance(headers, Mapping):
+        headers = {}
+    for header_name, value in headers.items():
+        if not isinstance(header_name, str) or header_name.casefold() != target:
+            continue
+        if isinstance(value, (list, tuple)):
+            return value[0] if len(value) == 1 else value
+        return value
+
+    multi_headers = event.get("multiValueHeaders")
+    if not isinstance(multi_headers, Mapping):
+        multi_headers = {}
+    for header_name, values in multi_headers.items():
+        if not isinstance(header_name, str) or header_name.casefold() != target:
+            continue
+        if isinstance(values, (list, tuple)):
+            return values[0] if len(values) == 1 else values
+        return values
+    return None
+
+
+def _raw_body(event: dict) -> bytes | None:
+    """Function URLイベントのraw bodyを改変せずバイト列へ戻す。"""
+    body = event.get("body")
+    if not isinstance(body, str):
+        return None
+    encoded = event.get("isBase64Encoded", False)
+    if not isinstance(encoded, bool):
+        return None
+    if encoded:
+        try:
+            return base64.b64decode(body, validate=True)
+        except (binascii.Error, ValueError):
+            return None
     return body.encode("utf-8")
 
 
-def _header(event: dict, name: str) -> str:
-    headers = event.get("headers") or {}
-    return headers.get(name) or headers.get(name.lower()) or ""
-
-
-def _collect_today_vitals(date: str, settings, log: StructuredLogger) -> None:
-    """起床トリガー: 朝8時の定時収集を待たず当日バイタルを今すぐ収集する（Feature 003 / FR-003）。
-
-    朝ループ（run_morning）と同じ依存・処理を再利用する。save_vital は上書きのため
-    後続の8時定時収集と二重に走っても冪等で安全。文脈構築の前に呼ぶことで、会話エージェントが
-    収集直後の最新データを踏まえて応答できる。
-
-    失敗・同意失効は会話継続を妨げないよう握りつぶしてログのみ残す（FR-012 は朝ループ側で停止判断）。
-    """
+def _verify_line_signature(
+    raw_body: bytes, received: object, channel_secret: str
+) -> int | None:
+    """LINE署名を厳密なBase64として検証し、拒否時のHTTPステータスを返す。"""
+    if not isinstance(received, str):
+        return 403
     try:
-        from handlers.morning_handler import build_morning_dependencies
-        from night_ramen.workflow.morning import run_morning
+        received_ascii = received.encode("ascii")
+    except UnicodeEncodeError:
+        return 403
+    if len(received_ascii) != 44:
+        return 403
+    try:
+        received_digest = base64.b64decode(received_ascii, validate=True)
+    except (binascii.Error, ValueError, TypeError):
+        return 403
+    if len(received_digest) != hashlib.sha256().digest_size:
+        return 403
+    if base64.b64encode(received_digest) != received_ascii:
+        return 403
+    try:
+        expected_digest = hmac.new(
+            channel_secret.encode("utf-8"), raw_body, hashlib.sha256
+        ).digest()
+        if not hmac.compare_digest(expected_digest, received_digest):
+            return 403
+    except (TypeError, UnicodeEncodeError):
+        return 403
+    return None
 
-        memory, health_source, report_source = build_morning_dependencies(settings)
-        record = run_morning(date, memory, health_source, report_source)
-        log.log("webhook_wakeup_collected", date=date, ok=record is not None)
-    except Exception as exc:  # noqa: BLE001 — 収集失敗で会話を止めない
-        log.log("webhook_wakeup_failed", error=type(exc).__name__)
+
+def is_wakeup_trigger(text: str) -> bool:
+    """起床トリガー語か判定する。完全一致のみ（質問文を誤検知しないため）。"""
+    return bool(_WAKEUP_RE.match((text or "").strip()))
 
 
-def handler(event, context=None):
-    """LINE Webhook エントリ（Lambda Function URL）。"""
+def resolve_feedback_date(memory, today: str) -> str | None:
+    """回答を紐付ける日付を返す。
+
+    直近の未回答の夜予測を、当日と前日の2日分のみ見て探す
+    （FEEDBACK_LOOKBACK_DAYS=2 の range(2) のため、2日前は見ない）。
+    """
+    base = date_cls.fromisoformat(today)
+    for i in range(FEEDBACK_LOOKBACK_DAYS):
+        d = (base - timedelta(days=i)).isoformat()
+        if memory.get_prediction(d, "NIGHT") and memory.get_feedback(d) is None:
+            return d
+    return None
+
+
+def _texts(payload: dict) -> list[str]:
+    """解析済みWebhook payloadからテキストメッセージ本文を取り出す。
+
+    top-level/body/events/message の型を検査し、不正なeventだけを捨てる。
+    1件の不正入力で同じbatch内の正常メッセージまで失わない。
+    """
+    if not isinstance(payload, dict):
+        return []
+    events = payload.get("events", [])
+    if not isinstance(events, list):
+        return []
+
+    out: list[str] = []
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        msg = ev.get("message")
+        if not isinstance(msg, dict):
+            continue
+        if ev.get("type") == "message" and msg.get("type") == "text":
+            text = msg.get("text")
+            if isinstance(text, str):
+                out.append(text)
+    return out
+
+
+def _authorized_texts(payload: dict, user_id: str) -> list[str]:
+    """許可した個人ユーザーのイベントだけ本文を返す。"""
+    if not isinstance(user_id, str) or not user_id:
+        return []
+    out: list[str] = []
+    for ev in payload.get("events", []):
+        if not isinstance(ev, dict):
+            continue
+        source = ev.get("source")
+        if not isinstance(source, dict) or source.get("type") != "user":
+            continue
+        source_user_id = source.get("userId")
+        if not isinstance(source_user_id, str) or not hmac.compare_digest(
+            source_user_id.encode("utf-8"), user_id.encode("utf-8")
+        ):
+            continue
+        msg = ev.get("message")
+        if (ev.get("type") == "message" and isinstance(msg, dict)
+                and msg.get("type") == "text" and isinstance(msg.get("text"), str)):
+            out.append(msg["text"])
+    return out
+
+
+def _parse_payload(raw_body: bytes) -> tuple[dict | None, int | None]:
+    """raw bodyを一度だけJSON解析し、Function URLの入力契約を検査する。"""
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None, 400
+    if not isinstance(payload, dict) or not isinstance(payload.get("events"), list):
+        return None, 400
+    return payload, None
+
+
+def handler(event, context=None) -> dict:
+    if not isinstance(event, dict):
+        return _response(400, "event must be an object")
+    raw_body = _raw_body(event)
+    if raw_body is None:
+        return _response(400, "body must be valid")
+    signature = _header(event, "x-line-signature")
+    if signature is None:
+        return _response(401, "missing LINE signature")
+
     log = StructuredLogger()
     settings = load_settings()
-    secret = _line_secret(settings)
-    body = _raw_body(event)
+    line_secret_data = hd._secret(settings.secret_line, settings.region)
+    line_secret = line_secret_data.get("channel_secret", "")
+    if not isinstance(line_secret, str) or not line_secret:
+        return _response(403, "LINE channel secret is not configured")
+    verification_status = _verify_line_signature(raw_body, signature, line_secret)
+    if verification_status is not None:
+        return _response(verification_status, "invalid LINE signature")
 
-    # 1. 署名検証（FR-108）
-    from night_ramen.notifier.line import verify_line_signature
+    payload, payload_status = _parse_payload(raw_body)
+    if payload_status is not None:
+        return _response(payload_status, "invalid LINE payload")
 
-    channel_secret = secret.get("channel_secret")
-    if channel_secret:
-        if not verify_line_signature(body, _header(event, "X-Line-Signature"), channel_secret):
-            log.log("webhook_bad_signature")
-            return {"statusCode": 403, "body": "invalid signature"}
-    else:
-        log.log("webhook_signature_skipped", reason="channel_secret 未設定")
+    now = hd.jst_now()
+    handled = []
 
-    try:
-        payload = json.loads(body or "{}")
-    except json.JSONDecodeError:
-        return {"statusCode": 400, "body": "bad json"}
-
-    token = secret.get("channel_access_token", "")
-    deps = _build_deps(settings)
-
-    for ev in payload.get("events", []):
-        if ev.get("type") != "message" or ev.get("message", {}).get("type") != "text":
+    allowed_user_id = line_secret_data.get("user_id", "")
+    for text in _authorized_texts(payload, allowed_user_id):
+        score = parse_feedback(text)
+        if score is not None:
+            memory = hd._memory(settings)
+            target = resolve_feedback_date(memory, hd.origin_date(now))
+            if target:
+                memory.save_feedback(
+                    Feedback(date=target, score=score,
+                             answered_at=now.isoformat(timespec="seconds"))
+                )
+                log.log("feedback_saved", date=target, score=score)
+                handled.append("feedback")
+            else:
+                log.log("feedback_unmatched", score=score)
             continue
-        _handle_message(ev, deps, token, settings, log)
 
-    return {"statusCode": 200, "body": "ok"}
+        if is_wakeup_trigger(text):
+            date = hd.origin_date(now, morning=True)
+            # I2対応: deadline を渡さないと Google API 全取得 + LLM3回試行 + LINE送信が
+            # Webhook 応答の中で無制限に走り、数十秒 200 を返せなくなる
+            # （LLM の時間予算ガードも deadline が無いと効かない）。
+            # night_handler / morning_handler と同じく deadline_from_context を使う。
+            deadline = hd.deadline_from_context(context)
+            deps = (hd.build_morning_deps(settings, deadline) if deadline is not None
+                    else hd.build_morning_deps(settings))
+            run_morning(date, deps)
+            log.log("wakeup_triggered", date=date)
+            handled.append("wakeup")
 
-
-def _build_deps(settings):
-    """会話処理に必要な依存を組み立てる（遅延 import で boto3 等を必要時のみ）。"""
-    from night_ramen.agents.prompts import boto3_invoker
-    from night_ramen.collectors.self_report import DynamoSelfReportSource
-    from night_ramen.conversation.memory_store import AgentCoreMemory
-    from night_ramen.memory.client import MemoryClient
-    from night_ramen.memory.dynamo_backend import DynamoMemoryBackend
-
-    memory = AgentCoreMemory(settings.memory_id, settings.region) if settings.memory_id else None
-    return {
-        "invoker": boto3_invoker(settings.region),
-        "report": DynamoSelfReportSource(settings.dynamodb_table, settings.region),
-        "vitals_client": MemoryClient(
-            DynamoMemoryBackend(settings.dynamodb_table, settings.region, settings.vital_retention_days)
-        ),
-        "memory": memory,
-        "goal": _load_goal(settings),
-    }
-
-
-def _handle_message(ev, deps, token, settings, log) -> None:
-    from datetime import date as date_cls, timedelta as td
-
-    from night_ramen.collectors.self_report import is_wakeup_trigger
-    from night_ramen.conversation.agent import (
-        SAFE_CONVERSATION_FALLBACK,
-        build_context,
-        generate_reply,
-    )
-    from night_ramen.conversation.extractor import extract_ramen_report, resolve_report_date
-    from night_ramen.guardrail.validator import GuardrailContext, generate_safe_message
-    from night_ramen.memory.schemas import GuardrailResult
-    from night_ramen.notifier.line import reply_message
-
-    text = ev["message"].get("text", "")
-    reply_token = ev.get("replyToken", "")
-    actor_id = ev.get("source", {}).get("userId", "unknown")
-    date = _today_jst()
-    session_id = f"line-{date}"
-    invoker = deps["invoker"]
-    model = settings.models.conversation_model
-
-    # 2. 自己申告抽出（併用）→ REPORT 保存（FR-105）。分類は高速な Haiku を使用。
-    #    日付が明示/相対で書かれていれば過去日付に記録（記録漏れ補完）。無ければ当日(date)。
-    ramen = extract_ramen_report(text, invoker, settings.models.classifier_model)
-    just_recorded = ""
-    if ramen is not None:
-        report_date = resolve_report_date(text, date, invoker, settings.models.classifier_model)
-        try:
-            deps["report"].put(report_date, ramen)
-            log.log("webhook_report_saved", date=report_date, ramen=ramen)
-            just_recorded = f"{report_date} のラーメン: {'あり' if ramen else 'なし'}"
-        except Exception:  # noqa: BLE001
-            log.log("webhook_report_save_failed")
-        # 当日申告なら vitals を即時更新（朝の質問ボタン押下後に ramen_last_night を反映）
-        if report_date == date:
-            _collect_today_vitals(date, settings, log)
-
-    # 2.5 起床トリガー: 8時を待たず当日バイタルを先行収集（Feature 003 / FR-003）。
-    #     文脈構築の前に収集するので、会話エージェントが当日の最新データを踏まえて応答する。
-    if is_wakeup_trigger(text):
-        log.log("webhook_wakeup_trigger", date=date)
-        _collect_today_vitals(date, settings, log)
-
-    # 3. 文脈構築（LTM/STM/バイタル/目標, FR-102,103,104）
-    memory = deps["memory"]
-    recent_turns = memory.get_recent_turns(actor_id, session_id, k=6) if memory else []
-    ltm = memory.retrieve_ltm(actor_id, session_id, query=text, top_k=3) if memory else []
-    # 月次サマリ用に記録開始(2025-12)まで遡る。保持は365日のため370日前まで取れば全保持分を網羅。
-    since = (date_cls.fromisoformat(date) - td(days=370)).isoformat()
-    vitals = deps["vitals_client"].get_vitals(since, date)
-    ctx = build_context(recent_turns, ltm, vitals, deps["goal"], today=date, just_recorded=just_recorded)
-
-    # 4. 応答生成 → ガードレール（送信前必須, FR-106）
-    g_ctx = GuardrailContext(goal_summary=ctx.goal_summary)
-    body, result = generate_safe_message(
-        lambda: generate_reply(text, ctx, invoker, model), g_ctx, settings.max_regenerations
-    )
-    if result == GuardrailResult.FALLBACK:
-        body = SAFE_CONVERSATION_FALLBACK  # 会話向けの安全フォールバック
-    log.log("webhook_reply_generated", guardrail=result.value, ramen_recorded=ramen is not None)
-
-    # 5. 返信 ＋ 会話ターンを Memory へ（ベストエフォート）
-    if reply_token and token:
-        try:
-            reply_message(reply_token, body, token)
-        except Exception:  # noqa: BLE001
-            log.log("webhook_reply_failed")
-    if memory:
-        memory.write_turn(actor_id, session_id, "USER", text)
-        memory.write_turn(actor_id, session_id, "ASSISTANT", body)
+    return {"statusCode": 200, "body": json.dumps({"handled": handled})}

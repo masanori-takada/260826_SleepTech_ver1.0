@@ -1,97 +1,207 @@
-"""ガードレール検証の必須テスト（T009 / Constitution 原則 II / FR-008,009,015）。
-
-契約（contracts/agent-interfaces.md C5）に基づく:
-- 差別的表現 → 不合格
-- 目標/仕様からの逸脱 → 不合格
-- 人格否定・過激な罵倒（正論の暴力）→ 不合格
-- 健全な個別化メッセージ → 合格
-- 検証内部例外 → fail-closed（不合格）
-- 3回連続不合格 → 固定安全文面（fallback）
-"""
-
-from __future__ import annotations
+"""ガードレール検証（仕様 第8節）。最優先のテスト群。"""
 
 import pytest
 
-from night_ramen.guardrail.validator import (
-    GuardrailContext,
-    validate,
-    generate_safe_message,
+from sleeptech.guardrail import validator as v
+
+
+FACTS = v.Facts(times=[23.5], percents=[8])
+NOTE = "（あなたの平常時を100%とした推定の目安）"
+OK_TEXT = f"今夜は23:30までに寝れば、明日はベスト比 -8% 以内の見込みです{NOTE}。"
+
+
+def test_clean_text_passes():
+    assert v.validate(OK_TEXT, FACTS).passed is True
+
+
+@pytest.mark.parametrize("text", [
+    f"この症状は睡眠時無呼吸症候群と診断できます。23:30までに寝ましょう。-8%{NOTE}。",
+    f"治療のために23:30に就寝してください。-8%{NOTE}。",
+    f"あなたは病気です。23:30に寝れば-8%です{NOTE}。",
+])
+def test_medical_assertions_are_rejected(text):
+    """医学的断定を弾く。"""
+    got = v.validate(text, FACTS)
+    assert got.passed is False
+    assert got.reason == "medical"
+
+
+@pytest.mark.parametrize("text", [
+    f"今寝ないと取り返しがつかないことになります。23:30 -8%{NOTE}。",
+    f"このままでは寿命が縮みます。23:30 -8%{NOTE}。",
+    f"手遅れになる前に23:30に寝てください。-8%{NOTE}。",
+])
+def test_fear_mongering_is_rejected(text):
+    """過度な不安煽りを弾く。"""
+    got = v.validate(text, FACTS)
+    assert got.passed is False
+    assert got.reason == "fear"
+
+
+@pytest.mark.parametrize("text", ["23:30に寝れば必ず-8%に収まります。", "23:30に寝ないと確実に-8%落ちます。"])
+def test_definitive_claims_are_rejected(text):
+    """断定表現（必ず・確実に）を弾く。"""
+    got = v.validate(text, FACTS)
+    assert got.passed is False
+    assert got.reason == "definitive"
+
+
+def test_personal_attacks_are_rejected():
+    """人格否定を弾く。"""
+    got = v.validate(f"だらしないあなたは23:30に寝るべきです。-8%{NOTE}。", FACTS)
+    assert got.passed is False
+    assert got.reason == "attack"
+
+
+@pytest.mark.parametrize(
+    "word",
+    [
+        "無能",
+        "クズ",
+        "ゴミ",
+        "バカ",
+        "死ね",
+        "人間失格",
+        "くたばれ",
+        "消えろ",
+        "生きる価値がない",
+        "生きる価値ない",
+        "一生治らない",
+        "デブ",
+        "気持ち悪い",
+        "アホ",
+    ],
 )
-from night_ramen.guardrail.fallback import SAFE_FALLBACK_MESSAGE
-from night_ramen.memory.schemas import GuardrailResult
+def test_transferred_personal_attacks_are_rejected(word):
+    got = v.validate(f"あなたは{word}。23:30に寝るべきです。-8%{NOTE}。", FACTS)
+    assert got.passed is False
+    assert got.reason == "attack"
 
 
-@pytest.fixture
-def ctx() -> GuardrailContext:
-    return GuardrailContext(goal_summary="成功率85% / 減量2kg")
+def test_missing_time_is_rejected():
+    """確定値の時刻が本文に現れなければ不通過。"""
+    got = v.validate(f"早めに寝ましょう。明日は-8%の見込みです{NOTE}。", FACTS)
+    assert got.passed is False
+    assert got.reason == "numbers"
 
 
-def test_discriminatory_language_fails(ctx):
-    verdict = validate("お前みたいなデブは人間как失格だ、くたばれ", ctx)
-    assert verdict.passed is False
-    assert verdict.reasons
+def test_missing_percent_is_rejected():
+    got = v.validate("今夜は23:30までに寝ましょう。", FACTS)
+    assert got.passed is False
+    assert got.reason == "numbers"
 
 
-def test_personal_attack_is_blocked(ctx):
-    # 正論の暴力：人格否定・過激な罵倒
-    verdict = validate("意志が弱い無能なお前は一生治らない。生きる価値がない。", ctx)
-    assert verdict.passed is False
+def test_fabricated_number_is_rejected():
+    """指示していない時刻や % が現れたら不通過（捏造）。"""
+    got = v.validate(f"23:30に寝れば-8%。ちなみに25:00なら-40%です{NOTE}。", FACTS)
+    assert got.passed is False
+    assert got.reason == "numbers"
 
 
-def test_goal_deviation_fails(ctx):
-    # 目標（ラーメンを断つ）から逸脱した指示
-    verdict = validate("今夜はラーメンを好きなだけ食べて構いません。", ctx)
-    assert verdict.passed is False
+@pytest.mark.parametrize("text", [
+    f"今夜は23時30分までに寝れば-8%以内の見込みです{NOTE}。",
+    f"今夜は２３：３０までに寝れば-8%以内の見込みです{NOTE}。",
+    f"今夜は午後11時半までに寝れば-8%以内の見込みです{NOTE}。",
+])
+def test_time_notation_variants_are_accepted(text):
+    """表記ゆれを正規化して照合するので通過する。"""
+    assert v.validate(text, FACTS).passed is True
 
 
-def test_healthy_personalized_message_passes(ctx):
-    text = (
-        "昨夜ラーメンを食べた日は睡眠スコアが12点下がり、HRVも落ちていました。"
-        "今夜は我慢して、明日の自分を軽くしてあげましょう。応援しています。"
-    )
-    verdict = validate(text, ctx)
-    assert verdict.passed is True
-    assert verdict.reasons == []
+def test_normalize_converts_fullwidth_digits():
+    assert "23:30" in v.normalize("２３：３０")
 
 
-def test_validation_is_fail_closed_on_exception(ctx):
-    # LLM 検査が例外を投げても安全側（不合格）に倒れる
-    def boom(_text: str) -> bool:
-        raise RuntimeError("LLM unavailable")
-
-    ctx_with_failing_llm = GuardrailContext(
-        goal_summary=ctx.goal_summary, llm_check=boom
-    )
-    verdict = validate("健全に見えるメッセージ", ctx_with_failing_llm)
-    assert verdict.passed is False
+def test_empty_text_is_rejected():
+    got = v.validate("", FACTS)
+    assert got.passed is False
 
 
-def test_generate_safe_message_falls_back_after_failures(ctx):
-    # 常に不合格になる生成器 → 2回再生成しても落ちるので固定安全文面
-    def bad_generator() -> str:
-        return "無能なお前はくたばれ"
-
-    body, result = generate_safe_message(bad_generator, ctx, max_retries=2)
-    assert result == GuardrailResult.FALLBACK
-    assert body == SAFE_FALLBACK_MESSAGE
+def test_percent_requires_estimate_and_relative_definition():
+    got = v.validate("23:30なら-8%です（目安）。", FACTS)
+    assert got.passed is False
+    assert got.reason == "definition"
 
 
-def test_generate_safe_message_returns_passing_text(ctx):
-    good = (
-        "昨夜のデータでは深い睡眠が短くなっていました。今夜は一杯我慢して、"
-        "気持ちよく朝を迎えましょう。"
-    )
-
-    def good_generator() -> str:
-        return good
-
-    body, result = generate_safe_message(good_generator, ctx, max_retries=2)
-    assert result == GuardrailResult.PASS
-    assert body == good
+@pytest.mark.parametrize("text", ["23:30なら+8%です（目安）。", "23:30なら＋8%です（目安）。"])
+def test_explicit_positive_percent_is_rejected(text):
+    """正の符号で低下率を反転させる表記を拒否する。"""
+    got = v.validate(text, FACTS)
+    assert got.passed is False
+    assert got.reason == "numbers"
 
 
-def test_fallback_message_is_itself_safe(ctx):
-    # 固定安全文面自体がガードレールを通過すること（自己無撞着）
-    verdict = validate(SAFE_FALLBACK_MESSAGE, ctx)
-    assert verdict.passed is True
+def test_unsigned_percent_with_explicit_drop_meaning_is_accepted():
+    text = f"23:30なら8%低下の見込みです{NOTE}。"
+    assert v.validate(text, FACTS).passed is True
+
+
+def test_unsigned_percent_without_drop_meaning_is_rejected():
+    got = v.validate(f"23:30なら8%です{NOTE}。", FACTS)
+    assert got.passed is False
+    assert got.reason == "numbers"
+
+
+def test_facts_with_no_percent_only_checks_times():
+    """% を指示していない場合は時刻だけ検査する。"""
+    facts = v.Facts(times=[7.5], percents=[])
+    assert v.validate("7:30に屋外光を浴びましょう。", facts).passed is True
+
+
+def test_allowed_percents_permit_additional_values():
+    """必須は谷の1つだけ、他の時間帯の % は許可値として通す。"""
+    facts = v.Facts(times=[], percents=[19], allowed_percents=[6, 19, 11])
+    text = f"10時台は-6%、14時台は-19%、17時台は-11%の見込みです{NOTE}。"
+    assert v.validate(text, facts).passed is True
+
+
+def test_allowed_percents_still_reject_unlisted_values():
+    """許可リストに無い % は捏造として弾く。"""
+    facts = v.Facts(times=[], percents=[19], allowed_percents=[6, 19, 11])
+    text = f"14時台は-19%、ちなみに深夜は-55%です{NOTE}。"
+    assert v.validate(text, facts).passed is False
+
+
+def test_night_mode_requires_day_prefix_for_next_day_time():
+    facts = v.Facts(times=[24.5], percents=[], require_day_prefix=True)
+    assert v.validate("翌 0:30に就寝しましょう。", facts).passed is True
+    assert v.validate("0:30に就寝しましょう。", facts).passed is False
+
+
+def test_morning_mode_keeps_plain_time_matching_for_elapsed_hours():
+    facts = v.Facts(times=[32.0], percents=[])
+    assert v.validate("8:00に屋外光を浴びましょう。", facts).passed is True
+
+
+@pytest.mark.parametrize("text", ["123:30", "23:300", "23:60"])
+def test_invalid_colon_time_does_not_satisfy_required_time(text):
+    facts = v.Facts(times=[23.5], percents=[])
+    assert v.validate(f"{text}に寝ましょう。", facts).passed is False
+
+
+@pytest.mark.parametrize("text", ["午前12時", "午前0時", "午後12時", "午後13時"])
+def test_ampm_boundary_is_not_misnormalized(text):
+    facts = v.Facts(times=[0.0], percents=[])
+    got = v.validate(f"{text}に寝ましょう。", facts)
+    if text == "午前12時":
+        assert got.passed is True
+    else:
+        assert got.passed is False
+
+
+def test_safe_medical_referral_is_allowed():
+    text = "睡眠時無呼吸症候群が心配なら医師に相談を。"
+    assert v.validate(text, v.Facts()).passed is True
+
+
+@pytest.mark.parametrize("text", ["不眠症です。", "この症状は睡眠時無呼吸症候群と診断できます。"])
+def test_personal_medical_diagnosis_is_rejected(text):
+    got = v.validate(text, v.Facts())
+    assert got.passed is False
+    assert got.reason == "medical"
+
+
+def test_plain_100_percent_without_relative_definition_is_rejected():
+    got = v.validate(f"23:30なら-8%です{NOTE}。100%です。", FACTS)
+    assert got.passed is False
+    assert got.reason == "numbers"

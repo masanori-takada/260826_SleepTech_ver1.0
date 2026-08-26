@@ -14,3 +14,7 @@ infra/layers/*/python/
 
 # OS
 .DS_Store
+
+# エージェント用ツールの足場（プロジェクト成果物ではない）
+.agents/
+AGENTS.md

@@ -1,91 +1,85 @@
-"""朝ループの Lambda ハンドラ（T025 / EventBridge 08:00 JST 起動）。
+"""朝 Lambda（EventBridge Scheduler 8:00 JST 起動）。
 
-payload 例: {"date": "2026-06-14"}
+起点日は前日である点に注意（前夜の夜メッセージと同じ日付を使う）。
+送信の冪等は run_morning が内部で担保するため、ここでは判定しない。
+
+最終レビュー対応（優先2）: 以前は event.get("date") が無ければ
+hd.jst_now()（壁時計）だけから起点日を導いていた。EventBridge Scheduler は
+RetryPolicy未指定だと既定で最大24時間・185回リトライするため、8:00起動が
+失敗し続けて日付が変わった後（例: 翌00:30）に成功すると起点日が1日ずれる。
+すると
+  - 08-26の朝メッセージが永久に欠落する
+  - IDEM#MORNING/2026-08-27 を先食いするため、翌08-27の本来の朝メッセージ
+    まで already_notified で無言消滅する（2日分の欠落）
+夜フローと同じ scheduled_time 契約を受け取り、同じ安全な再解釈ロジック
+（hd.resolve_scheduled_time）で起点日を導くことでこれを防ぐ。
+CDK側（infra/stacks/sleeptech_stack.py）でも MorningSchedule に
+{"scheduled_time": "<aws.scheduler.scheduled-time>"} を渡し、両Scheduleに
+RetryPolicyを明示して日跨ぎリトライ自体を起こしにくくしている。
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from collections.abc import Mapping
+from datetime import date as date_cls
 
-from night_ramen.config import load_settings
+from sleeptech.config import load_settings
+from sleeptech.observability import StructuredLogger
+from sleeptech.workflow.morning import run_morning
+from src.handlers import deps as hd
 
-
-def _today_jst() -> str:
-    jst = timezone(timedelta(hours=9))
-    return datetime.now(jst).date().isoformat()
-
-
-def build_morning_dependencies(settings):
-    """本番依存（Google Health ソース・自己申告ソース・Memory）を組み立てる。"""
-    from night_ramen.collectors.google_health_api import GoogleHealthApiSource
-    from night_ramen.collectors.self_report import DynamoSelfReportSource
-    from night_ramen.memory.client import MemoryClient
-    from night_ramen.memory.dynamo_backend import DynamoMemoryBackend
-
-    # Secrets Manager のリフレッシュトークンからアクセストークンを供給する
-    def access_token_provider() -> str:
-        from night_ramen.collectors.google_auth_helper import get_access_token
-
-        secret = _google_secret(settings)
-        return get_access_token(secret)
-
-    health_source = GoogleHealthApiSource(access_token_provider)
-    backend = DynamoMemoryBackend(
-        settings.dynamodb_table, settings.region, settings.vital_retention_days
-    )
-    report_source = DynamoSelfReportSource(settings.dynamodb_table, settings.region)
-    return MemoryClient(backend), health_source, report_source
+# 朝フローのcron予定時刻（JST）。scheduled_timeのローカル誤ラベル判定に使う
+# （hd.resolve_scheduled_time参照）。
+MORNING_CRON_HOUR_JST = 8
+MORNING_CRON_MINUTE_JST = 0
 
 
-def _line_secret(settings) -> dict:
-    import json
-
-    import boto3
-
-    sm = boto3.client("secretsmanager", region_name=settings.region)
-    return json.loads(sm.get_secret_value(SecretId=settings.secret_line)["SecretString"])
+def _bad_request(message: str) -> dict:
+    return {"statusCode": 400, "body": '{"error": "' + message + '"}'}
 
 
-def _send_morning_question(date: str, settings) -> None:
-    """朝の申告質問をクイックリプライ付きで LINE push 送信する（ベストエフォート）。
-
-    失敗しても朝ループの結果には影響させない。
-    """
-    try:
-        from night_ramen.notifier.line import push_ramen_question
-
-        secret = _line_secret(settings)
-        token = secret.get("channel_access_token", "")
-        user_id = secret.get("user_id", "")
-        if token and user_id:
-            push_ramen_question(date, token, user_id)
-    except Exception:  # noqa: BLE001 — 送信失敗で朝ループを止めない
-        pass
-
-
-def _google_secret(settings) -> dict:
-    """Google OAuth シークレット（client_id/secret/refresh_token）を取得（FR-011）。"""
-    import json
-
-    import boto3
-
-    sm = boto3.client("secretsmanager", region_name=settings.region)
-    raw = sm.get_secret_value(SecretId=settings.secret_google)["SecretString"]
-    return json.loads(raw)
-
-
-def handler(event, context=None):
+def handler(event, context=None) -> dict:
     event = event or {}
+    if not isinstance(event, Mapping):
+        return _bad_request("event must be an object")
+
+    event_keys = frozenset(event)
+    if event_keys not in {frozenset(), frozenset({"scheduled_time"}), frozenset({"date"})}:
+        return _bad_request("event contains unknown keys")
+
     settings = load_settings()
-    date = event.get("date") or _today_jst()
 
-    memory, health_source, report_source = build_morning_dependencies(settings)
-    from night_ramen.workflow.morning import run_morning
+    if "scheduled_time" in event:
+        resolved = hd.resolve_scheduled_time(
+            event["scheduled_time"], MORNING_CRON_HOUR_JST, MORNING_CRON_MINUTE_JST
+        )
+        if resolved is None:
+            return _bad_request("scheduled_time must be a timezone-aware ISO timestamp")
+        scheduled, mislabeled = resolved
+        if mislabeled:
+            # scheduled_time がローカル時刻に誤ってZを付けて返ってきた疑いがある
+            # （hd.resolve_scheduled_time参照）。壁時計にフォールバックし、その旨を記録する。
+            StructuredLogger().log(
+                "scheduled_time_local_label_fallback",
+                scheduled_time=scheduled.isoformat(),
+            )
+            date = hd.origin_date(hd.jst_now(), morning=True)
+        else:
+            # 再試行時の現在時刻ではなく、Schedulerの予定時刻を使う。
+            date = hd.origin_date(scheduled, morning=True)
+    elif "date" in event:
+        value = event["date"]
+        if not isinstance(value, str):
+            return _bad_request("date must be a string")
+        try:
+            date_cls.fromisoformat(value)
+        except ValueError:
+            return _bad_request("date must be a valid ISO date")
+        date = value
+    else:
+        date = hd.origin_date(hd.jst_now(), morning=True)
 
-    record = run_morning(date, memory, health_source, report_source)
-    _send_morning_question(date, settings)
-    return {
-        "date": date,
-        "collected": record is not None,
-        "missing_fields": (record.missing_fields if record else None),
-    }
+    deadline = hd.deadline_from_context(context)
+    deps = (hd.build_morning_deps(settings, deadline) if deadline is not None
+            else hd.build_morning_deps(settings))
+    return run_morning(date, deps)
