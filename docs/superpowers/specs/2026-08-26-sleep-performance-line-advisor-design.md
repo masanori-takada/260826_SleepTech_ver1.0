@@ -103,7 +103,7 @@ tests/           unit/ integration/
 
 ### データフロー（朝）
 
-1. `IDEM#<date>` の `MORNING` を確認。送信済みなら即終了
+1. `IDEM#MORNING` / `<date>` を確認。送信済みなら即終了
 2. Google Health API から前夜の睡眠・HRV・皮膚温等を取得
 3. DynamoDB に保存
 4. `two_process` が今日の時間帯別低下カーブを算出
@@ -118,7 +118,7 @@ tests/           unit/ integration/
 
 - 夜 22:30 に送るメッセージの `<date>` = その日の日付
 - 翌朝 8:00 に送るメッセージの `<date>` = **前夜と同じ日付**（起床日ではない）
-- したがって `PREDICT#<date>#NIGHT` と `PREDICT#<date>#MORNING` は必ず同じ晩を指す
+- したがって `PREDICT#NIGHT` と `PREDICT#MORNING` の同一 `<date>` は必ず同じ晩を指す
 - 日付をまたぐ就寝時刻は内部では「起点日 24:00 からの経過分」として扱い、24 時以降は表示上「翌 0:30」の形式にする（「24:30」とは書かない）
 - Google Health から取得した睡眠レコードは `civilStartTime`（就寝側）が属する日を `<date>` とする
 
@@ -279,7 +279,7 @@ alertness(t) = C(t) - S(t)
 | OpenAI API 障害 | 2回リトライ後、テンプレート文で送信（数値は保持されている） |
 | 同意失効（`ConsentRevokedError`） | 収集を停止し、再認証を促す通知を送る |
 | ガードレール不通過 | 最大2回再生成 → 安全なテンプレート文 |
-| 二重実行 | `IDEM#<date>` + スロット（night/morning）で冪等制御 |
+| 二重実行 | `IDEM#NIGHT` / `IDEM#MORNING` の `<date>` で冪等制御 |
 
 ## 11. テスト
 
