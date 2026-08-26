@@ -133,12 +133,15 @@ LINE_SECRET = "line-channel-secret"
 
 
 def _signed_raw_event(body, *, encoded=False, headers=None):
-    raw = body.encode("utf-8")
+    return _signed_bytes_event(body.encode("utf-8"), encoded=encoded, headers=headers)
+
+
+def _signed_bytes_event(raw, *, encoded=False, headers=None):
     signature = base64.b64encode(
         hmac.new(LINE_SECRET.encode("utf-8"), raw, hashlib.sha256).digest()
     ).decode("ascii")
     return {
-        "body": base64.b64encode(raw).decode("ascii") if encoded else body,
+        "body": base64.b64encode(raw).decode("ascii") if encoded else raw.decode("utf-8"),
         "isBase64Encoded": encoded,
         "headers": {"x-line-signature": signature} if headers is None else headers,
     }
@@ -202,6 +205,22 @@ def test_webhook_rejects_mismatched_signature_before_domain_processing(monkeypat
     assert morning_calls == []
 
 
+@pytest.mark.parametrize("signature", ["あ" * 44, "A B", "!!!!", "A" * 45, 123, b"bytes"])
+def test_webhook_rejects_non_strict_signature_as_403_without_domain_processing(
+    monkeypatch, signature
+):
+    morning_calls = _patch_webhook_dependencies(monkeypatch)
+    event = _signed_webhook_event(
+        [{"type": "message", "message": {"type": "text", "text": "おはよう"}}],
+        headers={"x-line-signature": signature},
+    )
+
+    result = wh.handler(event)
+
+    assert result["statusCode"] == 403
+    assert morning_calls == []
+
+
 def test_webhook_accepts_valid_signature_and_preserves_raw_body(monkeypatch):
     morning_calls = _patch_webhook_dependencies(monkeypatch)
     event = _signed_webhook_event(
@@ -225,6 +244,65 @@ def test_webhook_accepts_valid_signature_for_base64_body(monkeypatch):
 
     assert result["statusCode"] == 200
     assert morning_calls == [("2026-08-26", "deps")]
+
+
+def test_webhook_rejects_invalid_utf8_after_base64_decode(monkeypatch):
+    morning_calls = _patch_webhook_dependencies(monkeypatch)
+    event = _signed_bytes_event(b"\xff\xfe", encoded=True)
+
+    result = wh.handler(event)
+
+    assert result["statusCode"] == 400
+    assert morning_calls == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "not-json",
+        "[]",
+        json.dumps({"events": "not-a-list"}),
+        json.dumps({"other": []}),
+    ],
+)
+def test_webhook_rejects_invalid_payload_shape_after_signature(monkeypatch, body):
+    morning_calls = _patch_webhook_dependencies(monkeypatch)
+
+    result = wh.handler(_signed_raw_event(body))
+
+    assert result["statusCode"] == 400
+    assert morning_calls == []
+
+
+def test_webhook_accepts_signed_empty_events_as_validation_probe(monkeypatch):
+    _patch_webhook_dependencies(monkeypatch)
+
+    result = wh.handler(_signed_raw_event('{"events":[]}'))
+
+    assert result["statusCode"] == 200
+    assert json.loads(result["body"]) == {"handled": []}
+
+
+def test_webhook_verifies_exact_raw_body_with_formatting_and_escaping(monkeypatch):
+    morning_calls = _patch_webhook_dependencies(monkeypatch)
+    raw = '{\n  "escaped": "\\ud83c\\udf19", "emoji": "🌙", "events": []\n}'
+    event = _signed_raw_event(raw)
+
+    result = wh.handler(event)
+
+    assert result["statusCode"] == 200
+    assert morning_calls == []
+
+
+def test_webhook_rejects_one_byte_raw_body_change(monkeypatch):
+    morning_calls = _patch_webhook_dependencies(monkeypatch)
+    event = _signed_raw_event('{"events":[]}')
+    event["body"] = '{"events": []}'
+
+    result = wh.handler(event)
+
+    assert result["statusCode"] == 403
+    assert morning_calls == []
 
 
 def test_webhook_accepts_case_insensitive_signature_header(monkeypatch):
@@ -310,9 +388,6 @@ def test_webhook_rejects_non_boolean_base64_flag(monkeypatch):
 @pytest.mark.parametrize(
     "event",
     [
-        _signed_raw_event("not-json"),
-        _signed_raw_event("[]"),
-        _signed_raw_event(json.dumps({"events": "not-a-list"})),
         _webhook_event([{"type": "message", "message": []}]),
         _webhook_event([{"type": "message", "message": {"type": "text", "text": 3}}]),
     ],
@@ -358,12 +433,12 @@ def test_webhook_handler_processes_multiple_valid_events(monkeypatch):
 
 
 def test_texts_returns_only_string_texts_from_valid_events():
-    event = _webhook_event(
-        [
+    event = {
+        "events": [
             {"type": "message", "message": {"type": "text", "text": "有効"}},
             {"type": "message", "message": {"type": "text", "text": 3}},
             {"type": "message", "message": {}},
         ]
-    )
+    }
 
     assert wh._texts(event) == ["有効"]

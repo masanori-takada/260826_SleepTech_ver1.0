@@ -38,7 +38,7 @@ def _response(status_code: int, error: str) -> dict:
     return {"statusCode": status_code, "body": json.dumps({"error": error})}
 
 
-def _header(event: dict, name: str) -> str | None:
+def _header(event: dict, name: str) -> object | None:
     """通常ヘッダーと複数値ヘッダーから値を大文字小文字非依存で得る。"""
     target = name.casefold()
     headers = event.get("headers")
@@ -47,10 +47,9 @@ def _header(event: dict, name: str) -> str | None:
     for header_name, value in headers.items():
         if not isinstance(header_name, str) or header_name.casefold() != target:
             continue
-        if isinstance(value, str):
-            return value
-        if isinstance(value, (list, tuple)) and len(value) == 1 and isinstance(value[0], str):
-            return value[0]
+        if isinstance(value, (list, tuple)):
+            return value[0] if len(value) == 1 else value
+        return value
 
     multi_headers = event.get("multiValueHeaders")
     if not isinstance(multi_headers, Mapping):
@@ -58,10 +57,9 @@ def _header(event: dict, name: str) -> str | None:
     for header_name, values in multi_headers.items():
         if not isinstance(header_name, str) or header_name.casefold() != target:
             continue
-        if isinstance(values, (list, tuple)) and len(values) == 1 and isinstance(values[0], str):
-            return values[0]
-        if isinstance(values, str):
-            return values
+        if isinstance(values, (list, tuple)):
+            return values[0] if len(values) == 1 else values
+        return values
     return None
 
 
@@ -81,18 +79,33 @@ def _raw_body(event: dict) -> bytes | None:
     return body.encode("utf-8")
 
 
-def _verify_line_signature(event: dict, channel_secret: str) -> int | None:
-    """LINE署名を検証し、拒否時のHTTPステータスを返す。"""
-    raw_body = _raw_body(event)
-    if raw_body is None:
-        return 400
-    received = _header(event, "x-line-signature")
-    if not received:
-        return 401
-    expected = base64.b64encode(
-        hmac.new(channel_secret.encode("utf-8"), raw_body, hashlib.sha256).digest()
-    ).decode("ascii")
-    if not hmac.compare_digest(expected, received):
+def _verify_line_signature(
+    raw_body: bytes, received: object, channel_secret: str
+) -> int | None:
+    """LINE署名を厳密なBase64として検証し、拒否時のHTTPステータスを返す。"""
+    if not isinstance(received, str):
+        return 403
+    try:
+        received_ascii = received.encode("ascii")
+    except UnicodeEncodeError:
+        return 403
+    if len(received_ascii) != 44:
+        return 403
+    try:
+        received_digest = base64.b64decode(received_ascii, validate=True)
+    except (binascii.Error, ValueError, TypeError):
+        return 403
+    if len(received_digest) != hashlib.sha256().digest_size:
+        return 403
+    if base64.b64encode(received_digest) != received_ascii:
+        return 403
+    try:
+        expected_digest = hmac.new(
+            channel_secret.encode("utf-8"), raw_body, hashlib.sha256
+        ).digest()
+        if not hmac.compare_digest(expected_digest, received_digest):
+            return 403
+    except (TypeError, UnicodeEncodeError):
         return 403
     return None
 
@@ -116,25 +129,15 @@ def resolve_feedback_date(memory, today: str) -> str | None:
     return None
 
 
-def _texts(event) -> list[str]:
-    """Webhook イベントからテキストメッセージ本文を取り出す。
+def _texts(payload: dict) -> list[str]:
+    """解析済みWebhook payloadからテキストメッセージ本文を取り出す。
 
     top-level/body/events/message の型を検査し、不正なeventだけを捨てる。
     1件の不正入力で同じbatch内の正常メッセージまで失わない。
     """
-    if not isinstance(event, dict):
+    if not isinstance(payload, dict):
         return []
-    try:
-        raw_body = _raw_body(event)
-        if raw_body is None:
-            return []
-        body = json.loads(raw_body.decode("utf-8"))
-    except (TypeError, ValueError, AttributeError):
-        return []
-
-    if not isinstance(body, dict):
-        return []
-    events = body.get("events", [])
+    events = payload.get("events", [])
     if not isinstance(events, list):
         return []
 
@@ -152,6 +155,17 @@ def _texts(event) -> list[str]:
     return out
 
 
+def _parse_payload(raw_body: bytes) -> tuple[dict | None, int | None]:
+    """raw bodyを一度だけJSON解析し、Function URLの入力契約を検査する。"""
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None, 400
+    if not isinstance(payload, dict) or not isinstance(payload.get("events"), list):
+        return None, 400
+    return payload, None
+
+
 def handler(event, context=None) -> dict:
     if not isinstance(event, dict):
         return _response(400, "event must be an object")
@@ -159,7 +173,7 @@ def handler(event, context=None) -> dict:
     if raw_body is None:
         return _response(400, "body must be valid")
     signature = _header(event, "x-line-signature")
-    if not signature:
+    if signature is None:
         return _response(401, "missing LINE signature")
 
     log = StructuredLogger()
@@ -167,14 +181,18 @@ def handler(event, context=None) -> dict:
     line_secret = hd._secret(settings.secret_line, settings.region).get("channel_secret", "")
     if not isinstance(line_secret, str) or not line_secret:
         return _response(403, "LINE channel secret is not configured")
-    verification_status = _verify_line_signature(event, line_secret)
+    verification_status = _verify_line_signature(raw_body, signature, line_secret)
     if verification_status is not None:
         return _response(verification_status, "invalid LINE signature")
+
+    payload, payload_status = _parse_payload(raw_body)
+    if payload_status is not None:
+        return _response(payload_status, "invalid LINE payload")
 
     now = hd.jst_now()
     handled = []
 
-    for text in _texts(event or {}):
+    for text in _texts(payload):
         score = parse_feedback(text)
         if score is not None:
             memory = hd._memory(settings)
