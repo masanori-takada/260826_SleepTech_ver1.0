@@ -1,7 +1,7 @@
 """起点日 0:00 からの経過時間（float, 単位=時）と表示文字列の相互変換。
 
 日付をまたぐ時刻を「24:30」と書いてはならない（仕様 第4節）。
-翌日は「翌 0:30」、翌々日は「翌々 23:30」と表記する。
+翌日は「翌 0:30」、翌々日は「翌々 0:00」と表記する。
 """
 
 from __future__ import annotations
@@ -24,8 +24,7 @@ def _split(t_h: float) -> tuple[int, int, int]:
 
 def fmt_hm(t_h: float) -> str:
     """表示用の時刻文字列。日付をまたぐ場合は「翌」を前置する。"""
-    _, hour, minute = _split(t_h)
-    days = 0 if t_h < 24.0 else int(round(t_h / 24.0))
+    days, hour, minute = _split(t_h)
     prefix = _DAY_PREFIX[days] if days < len(_DAY_PREFIX) else f"{days}日後 "
     return f"{prefix}{hour}:{minute:02d}"
 
