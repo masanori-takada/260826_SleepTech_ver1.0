@@ -38,6 +38,8 @@ ASSET_EXCLUDES = [
     "AGENTS.md",
     "CLAUDE.md",
     "infra",
+    "LINE_Developersの３つの値.txt",
+    "OpenAI_API_Key.txt",
 ]
 
 
@@ -87,11 +89,16 @@ class SleepTechStack(Stack):
         webhook_fn = self._function(
             "WebhookFn", "src.handlers.webhook_handler.handler", environment
         )
+        backfill_fn = self._function(
+            "BackfillFn", "src.handlers.backfill_handler.handler", environment,
+            timeout=Duration.seconds(900),
+        )
 
         secret_access = {
             night_fn: ("line", "openai"),
             morning_fn: ("google", "line", "openai"),
             webhook_fn: ("google", "line", "openai"),
+            backfill_fn: ("google",),
         }
         for function, secret_keys in secret_access.items():
             table.grant_read_write_data(function)
@@ -123,7 +130,8 @@ class SleepTechStack(Stack):
         )
 
     def _function(
-        self, name: str, handler: str, environment: dict[str, str]
+        self, name: str, handler: str, environment: dict[str, str],
+        timeout: Duration = Duration.seconds(60),
     ) -> lambda_.Function:
         return lambda_.Function(
             self,
@@ -134,7 +142,7 @@ class SleepTechStack(Stack):
                 REPO_ROOT,
                 exclude=ASSET_EXCLUDES,
             ),
-            timeout=Duration.seconds(60),
+            timeout=timeout,
             memory_size=512,
             environment=environment,
         )

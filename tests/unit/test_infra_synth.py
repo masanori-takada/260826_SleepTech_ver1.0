@@ -22,8 +22,8 @@ def template() -> Template:
     return Template.from_stack(SleepTechStack(App(), "TestStack"))
 
 
-def test_creates_three_lambdas(template):
-    template.resource_count_is("AWS::Lambda::Function", 3)
+def test_creates_four_lambdas(template):
+    template.resource_count_is("AWS::Lambda::Function", 4)
 
 
 def test_each_lambda_has_the_expected_handler(template):
@@ -33,6 +33,7 @@ def test_each_lambda_has_the_expected_handler(template):
         "src.handlers.night_handler.handler",
         "src.handlers.morning_handler.handler",
         "src.handlers.webhook_handler.handler",
+        "src.handlers.backfill_handler.handler",
     }
 
 
@@ -145,6 +146,42 @@ def test_lambdas_are_python312_with_expected_handlers(template):
         "AWS::Lambda::Function",
         {"Runtime": "python3.12", "Handler": "src.handlers.webhook_handler.handler"},
     )
+    template.has_resource_properties(
+        "AWS::Lambda::Function",
+        {"Runtime": "python3.12", "Handler": "src.handlers.backfill_handler.handler"},
+    )
+
+
+def test_backfill_has_900_second_timeout(template):
+    functions = template.find_resources("AWS::Lambda::Function")
+    backfill = next(
+        resource for resource in functions.values()
+        if resource["Properties"]["Handler"] == "src.handlers.backfill_handler.handler"
+    )
+    assert backfill["Properties"]["Timeout"] == 900
+
+
+def test_backfill_is_not_a_schedule_or_function_url_target(template):
+    functions = template.find_resources("AWS::Lambda::Function")
+    backfill = next(
+        resource for resource in functions.values()
+        if resource["Properties"]["Handler"] == "src.handlers.backfill_handler.handler"
+    )
+    backfill_ref = backfill["Properties"]["Role"]
+    schedules = json.dumps(template.find_resources("AWS::Scheduler::Schedule"))
+    urls = json.dumps(template.find_resources("AWS::Lambda::Url"))
+    assert "BackfillFn" not in schedules
+    assert "BackfillFn" not in urls
+    assert backfill_ref
+
+
+def test_backfill_role_has_dynamodb_read_write_but_no_external_secret_access(template):
+    policy_text = _secret_policy_text(template, "src.handlers.backfill_handler.handler")
+    assert "dynamodb:GetItem" in policy_text
+    assert "dynamodb:PutItem" in policy_text
+    assert "sleeptech/google-oauth" in policy_text
+    assert "sleeptech/line" not in policy_text
+    assert "sleeptech/openai" not in policy_text
 
 
 def test_lambdas_receive_model_and_pythonpath(template):
@@ -215,6 +252,11 @@ def _secret_policy_text(template, handler: str) -> str:
             ("sleeptech/google-oauth", "sleeptech/line", "sleeptech/openai"),
             (),
         ),
+        (
+            "src.handlers.backfill_handler.handler",
+            ("sleeptech/google-oauth",),
+            ("sleeptech/line", "sleeptech/openai"),
+        ),
     ],
 )
 def test_each_lambda_has_only_its_required_secret_permissions(
@@ -236,6 +278,7 @@ def test_asset_root_contains_src_and_all_handlers_are_importable():
         "src.handlers.night_handler",
         "src.handlers.morning_handler",
         "src.handlers.webhook_handler",
+        "src.handlers.backfill_handler",
     ):
         module = importlib.import_module(module_name)
         assert callable(getattr(module, "handler"))
@@ -255,6 +298,7 @@ def test_synth_asset_root_contains_src_and_all_handler_files():
         "night_handler.py",
         "morning_handler.py",
         "webhook_handler.py",
+        "backfill_handler.py",
     ):
         assert (asset_root / "src" / "handlers" / handler_name).is_file()
     for development_item in (
@@ -265,5 +309,7 @@ def test_synth_asset_root_contains_src_and_all_handler_files():
         "AGENTS.md",
         "CLAUDE.md",
         "infra",
+        "LINE_Developersの３つの値.txt",
+        "OpenAI_API_Key.txt",
     ):
         assert not (asset_root / development_item).exists()

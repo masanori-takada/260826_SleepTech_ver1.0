@@ -55,6 +55,7 @@ def _default_token_poster(url: str, form: dict) -> dict:
     """本番用: urllib で token 端点へ POST（外部依存を最小化）。"""
     import json
     import urllib.parse
+    import urllib.error
     import urllib.request
 
     data = urllib.parse.urlencode(form).encode("utf-8")
@@ -62,5 +63,17 @@ def _default_token_poster(url: str, form: dict) -> dict:
         url, data=data, headers={"Content-Type": "application/x-www-form-urlencoded"}
     )
     # M4対応: 60秒Lambdaに対して15秒は長すぎる（他の処理の時間予算を圧迫する）ため5秒に短縮。
-    with urllib.request.urlopen(req, timeout=5) as r:  # noqa: S310 — 固定の Google 端点
-        return json.loads(r.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:  # noqa: S310 — 固定の Google 端点
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 400:
+            try:
+                body = json.loads(exc.read().decode("utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                body = {}
+            if body.get("error") == "invalid_grant":
+                # HTTP本文にはrefresh token等を含めず、上位で同意失効として扱う。
+                raise PermissionError("OAuth同意が失効しました") from exc
+        # 429/5xx/一般的な400は一時障害・一般障害として呼び出し元へ伝える。
+        raise

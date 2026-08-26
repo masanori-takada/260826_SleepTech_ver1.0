@@ -14,7 +14,6 @@ import time
 
 API_URL = "https://api.openai.com/v1/chat/completions"
 MAX_ATTEMPTS = 3       # 初回 + リトライ2回
-TEMPERATURE = 0.7
 MAX_TOKENS = 700
 ATTEMPT_TIMEOUT_SEC = 8.0
 LINE_RESERVE_SEC = 12.0
@@ -72,8 +71,7 @@ class OpenAiClient:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "temperature": TEMPERATURE,
-            "max_tokens": MAX_TOKENS,
+            "max_completion_tokens": MAX_TOKENS,
         }
 
         last: Exception | None = None

@@ -40,6 +40,9 @@ def test_request_shape_is_chat_completions():
         {"role": "system", "content": "SYS"},
         {"role": "user", "content": "USR"},
     ]
+    assert captured["body"]["max_completion_tokens"] == llm.MAX_TOKENS
+    assert "max_tokens" not in captured["body"]
+    assert "temperature" not in captured["body"]
 
 
 def test_retries_twice_then_succeeds():

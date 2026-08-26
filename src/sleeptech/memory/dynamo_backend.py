@@ -79,6 +79,39 @@ class DynamoBackend:
             return False
         return True
 
+    def put_json_if_match(
+        self, pk: str, sk: str, value: dict, expected_json: str | None
+    ) -> bool:
+        """期待したJSONのままなら保存する楽観ロック付き書込。"""
+        item = self._item(pk, sk, value)
+        condition = (
+            Attr("pk").not_exists()
+            if expected_json is None
+            else Attr("json").eq(expected_json)
+        )
+        try:
+            self._table.put_item(Item=item, ConditionExpression=condition)
+        except self._table.meta.client.exceptions.ConditionalCheckFailedException:
+            return False
+        return True
+
+    def _get_json(self, pk: str, sk: str) -> tuple[dict | None, str | None]:
+        item = self._table.get_item(Key={"pk": pk, "sk": sk}).get("Item")
+        if not item or "json" not in item:
+            return None, None
+        return json.loads(item["json"]), item["json"]
+
+    def merge_json(
+        self, pk: str, sk: str, merge, max_retries: int = 3
+    ) -> dict:
+        """再読込・再マージを伴う有限回のJSON楽観ロック更新。"""
+        for _ in range(max_retries + 1):
+            current, expected_json = self._get_json(pk, sk)
+            merged = merge(current)
+            if self.put_json_if_match(pk, sk, merged, expected_json):
+                return merged
+        raise RuntimeError("DynamoDB JSON更新が競合上限に達しました")
+
     def claim(self, pk: str, sk: str, value: dict, now: float, lease_seconds: int) -> bool:
         item = self._item(pk, sk, {**value, "status": "PENDING", "lease_until": now + lease_seconds})
         # ConditionExpression の比較値も DynamoDB Table リソースでは Decimal が必要

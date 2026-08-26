@@ -98,3 +98,35 @@ def test_mark_notified_is_idempotent_after_completion(backend):
     # 二重呼び出しは条件不成立で False になる（すでに SENT のため PENDING 条件を満たさない）
     assert memory.mark_notified(date, slot) is False
     assert memory.is_notified(date, slot) is True
+
+
+def test_merge_json_retries_after_conflict_and_keeps_concurrent_field(backend, monkeypatch):
+    backend.put("VITAL", "2026-08-01", {"date": "2026-08-01", "old": "keep"})
+    original = backend.put_json_if_match
+    calls = {"count": 0}
+
+    def conflict_once(pk, sk, value, expected_json):
+        if calls["count"] == 0:
+            calls["count"] += 1
+            backend.put("VITAL", "2026-08-01", {
+                "date": "2026-08-01", "old": "keep", "other_process": "preserve"
+            })
+            return False
+        return original(pk, sk, value, expected_json)
+
+    monkeypatch.setattr(backend, "put_json_if_match", conflict_once)
+    merged = backend.merge_json(
+        "VITAL", "2026-08-01", lambda current: {**(current or {}), "backfill": 2}
+    )
+
+    assert merged["other_process"] == "preserve"
+    assert merged["backfill"] == 2
+
+
+def test_merge_json_creates_new_item_conditionally(backend):
+    merged = backend.merge_json(
+        "VITAL", "2026-08-02", lambda current: {"date": "2026-08-02", "value": 1}
+    )
+
+    assert merged == {"date": "2026-08-02", "value": 1}
+    assert backend.get("VITAL", "2026-08-02")["value"] == 1
