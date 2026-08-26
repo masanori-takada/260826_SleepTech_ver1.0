@@ -16,7 +16,10 @@ _MEDICAL = re.compile(
 )
 _FEAR = re.compile(r"取り返しがつかない|寿命が縮|手遅れ|命に関わ|危険な状態")
 _DEFINITIVE = re.compile(r"必ず|確実に|絶対に")
-_ATTACK = re.compile(r"だらしない|意志が弱い|情けない|怠惰|ダメな人|無能|クズ|ゴミ|バカ|死ね|人間失格")
+_ATTACK = re.compile(
+    r"だらしない|意志が弱い|情けない|怠惰|ダメな人|無能|クズ|ゴミ|バカ|死ね|人間失格|"
+    r"くたばれ|消えろ|生きる価値(?:が)?ない|一生治らない|デブ|気持ち悪い|アホ"
+)
 
 _TIME_RE = re.compile(r"(?<!\d)(?:(?P<day>翌)\s*)?(\d{1,2}):(\d{2})(?!\d)")
 _PCT_RE = re.compile(r"(?P<sign>[+-]?)(?P<value>\d{1,3})%")

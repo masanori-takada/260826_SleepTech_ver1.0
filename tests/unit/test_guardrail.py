@@ -53,9 +53,27 @@ def test_personal_attacks_are_rejected():
     assert got.reason == "attack"
 
 
-@pytest.mark.parametrize("word", ["無能", "クズ", "ゴミ", "バカ", "死ね", "人間失格"])
+@pytest.mark.parametrize(
+    "word",
+    [
+        "無能",
+        "クズ",
+        "ゴミ",
+        "バカ",
+        "死ね",
+        "人間失格",
+        "くたばれ",
+        "消えろ",
+        "生きる価値がない",
+        "生きる価値ない",
+        "一生治らない",
+        "デブ",
+        "気持ち悪い",
+        "アホ",
+    ],
+)
 def test_transferred_personal_attacks_are_rejected(word):
-    got = v.validate(f"{word}なあなたは23:30に寝るべきです。-8%{NOTE}。", FACTS)
+    got = v.validate(f"あなたは{word}。23:30に寝るべきです。-8%{NOTE}。", FACTS)
     assert got.passed is False
     assert got.reason == "attack"
 
