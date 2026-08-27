@@ -14,6 +14,10 @@ PK_CONFIG = "CONFIG"
 SK_META = "META"
 
 
+class NotificationClaimBusy(RuntimeError):
+    """別実行が通知送信中のleaseを保持している。"""
+
+
 def _pk_prediction(slot: str) -> str:
     return f"PREDICT#{slot}"
 
@@ -64,6 +68,10 @@ class InMemoryBackend:
 
     def get(self, pk: str, sk: str) -> dict | None:
         return self._items.get((pk, sk))
+
+    def get_strong(self, pk: str, sk: str) -> dict | None:
+        """DynamoBackend互換のclaim判定用read。インメモリでは通常readと同じ。"""
+        return self.get(pk, sk)
 
     def query_range(self, pk: str, start_sk: str, end_sk: str) -> list[dict]:
         picked = [
@@ -130,13 +138,24 @@ class MemoryClient:
     def claim_notification(self, date: str, slot: str, now: float | None = None,
                            lease_seconds: int = 90) -> bool:
         now = time.time() if now is None else now
+        pk, sk = _pk_idem(slot), date
         claim = getattr(self._backend, "claim", None)
         if callable(claim):
-            return claim(_pk_idem(slot), date, {"date": date, "slot": slot}, now, lease_seconds)
-        return self._backend.put_conditional(
-            _pk_idem(slot), date, {"date": date, "slot": slot, "status": "PENDING",
-                                   "lease_until": now + lease_seconds}
-        )
+            claimed = claim(pk, sk, {"date": date, "slot": slot}, now, lease_seconds)
+        else:
+            claimed = self._backend.put_conditional(
+                pk, sk, {"date": date, "slot": slot, "status": "PENDING",
+                         "lease_until": now + lease_seconds}
+            )
+        if claimed:
+            return True
+
+        get_strong = getattr(self._backend, "get_strong", None)
+        current = (get_strong(pk, sk) if callable(get_strong)
+                   else self._backend.get(pk, sk))
+        if current and current.get("status") == "PENDING" and current.get("lease_until", 0) > now:
+            raise NotificationClaimBusy(f"notification claim is leased: {slot}/{date}")
+        return False
 
     def mark_notified(self, date: str, slot: str) -> bool:
         """バックエンドが提供するインタフェースで分岐する（クラス名文字列には依存しない）。"""

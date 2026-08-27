@@ -1,14 +1,16 @@
 """夜フローの統合（仕様 第4節「データフロー（夜）」）。"""
 
 from dataclasses import replace
+import time
+from urllib.error import HTTPError
 
 import pytest
 
 from sleeptech.config import load_settings
 from sleeptech.llm.client import LlmError, NullClient
-from sleeptech.memory.client import InMemoryBackend, MemoryClient
+from sleeptech.memory.client import InMemoryBackend, MemoryClient, NotificationClaimBusy
 from sleeptech.memory.schemas import DailyVital
-from sleeptech.notifier.line import FakePushClient, parse_feedback
+from sleeptech.notifier.line import FakePushClient, LinePushClient, parse_feedback
 from sleeptech.workflow import night
 
 NOW_H = 22.5  # 22:30
@@ -118,6 +120,34 @@ def test_second_run_does_not_send_again():
     night.run_night(DATE, NOW_H, _deps(memory=memory, push=push))
     night.run_night(DATE, NOW_H, _deps(memory=memory, push=push))
     assert len(push.sent) == 1
+
+
+def test_pending_lease_is_returned_as_retryable_failure():
+    """送信中のPENDING leaseは正常なskipではなくSchedulerへ失敗を返す。"""
+    memory = _memory()
+    memory.claim_notification(DATE, "NIGHT", now=time.time(), lease_seconds=90)
+
+    with pytest.raises(NotificationClaimBusy):
+        night.run_night(DATE, NOW_H, _deps(memory=memory))
+
+
+def test_duplicate_retry_key_response_completes_night_as_sent():
+    """LINEの重複retry key受理409でも夜フローを成功完了しSENTにする。"""
+    accepted = HTTPError(
+        "https://api.line.me/v2/bot/message/push", 409, "Conflict",
+        {"X-Line-Accepted-Request-Id": "accepted-request-id"}, None,
+    )
+
+    def duplicate_post(url, headers, body):
+        raise accepted
+
+    memory = _memory()
+    push = LinePushClient("token", "U123", http_post=duplicate_post)
+    result = night.run_night(DATE, NOW_H, _deps(memory=memory, push=push))
+
+    assert result["delivered"] is True
+    assert result["skipped"] is False
+    assert memory.is_notified(DATE, "NIGHT") is True
 
 
 def test_retry_key_is_stable_for_same_slot_and_differs_by_slot_or_date():

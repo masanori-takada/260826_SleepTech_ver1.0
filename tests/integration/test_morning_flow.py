@@ -1,9 +1,13 @@
 """朝フローの統合と冪等（仕様 第4節「データフロー（朝）」）。"""
 
+import time
+
+import pytest
+
 from sleeptech.collectors import ConsentRevokedError
 from sleeptech.config import load_settings
 from sleeptech.llm.client import NullClient
-from sleeptech.memory.client import InMemoryBackend, MemoryClient
+from sleeptech.memory.client import InMemoryBackend, MemoryClient, NotificationClaimBusy
 from sleeptech.memory.schemas import DailyVital
 from sleeptech.notifier.line import FakePushClient
 from sleeptech.workflow import morning
@@ -98,6 +102,15 @@ def test_second_run_reports_skipped():
     morning.run_morning(DATE, _deps(memory=memory))
     got = morning.run_morning(DATE, _deps(memory=memory))
     assert got["skipped"] is True
+
+
+def test_pending_lease_is_returned_as_retryable_failure():
+    """送信中のPENDING leaseは朝フローでも正常なskipにしない。"""
+    memory = _memory()
+    memory.claim_notification(DATE, "MORNING", now=time.time(), lease_seconds=90)
+
+    with pytest.raises(NotificationClaimBusy):
+        morning.run_morning(DATE, _deps(memory=memory))
 
 
 def test_saves_prediction_with_curve():

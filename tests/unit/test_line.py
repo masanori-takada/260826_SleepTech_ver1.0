@@ -1,6 +1,7 @@
 """LINE メッセージ構築とフィードバック判定（仕様 第9節「フィードバックの取り込み」）。"""
 
 import pytest
+from urllib.error import HTTPError
 
 from sleeptech.notifier import line
 
@@ -83,3 +84,29 @@ def test_push_client_uses_retry_key_on_every_request():
     c.push(line.build_message("本文", with_feedback=False), retry_key=key)
 
     assert captured["headers"]["X-Line-Retry-Key"] == key
+
+
+def test_default_http_post_accepts_line_duplicate_retry_key(monkeypatch):
+    """LINE が重複 retry key を受理済みと返す409は送信成功として扱う。"""
+    error = HTTPError(
+        line.PUSH_URL, 409, "Conflict",
+        {"X-Line-Accepted-Request-Id": "accepted-request-id"}, None,
+    )
+
+    def fail_urlopen(request, timeout):
+        raise error
+
+    monkeypatch.setattr("urllib.request.urlopen", fail_urlopen)
+    line._default_http_post(line.PUSH_URL, {}, {})
+
+
+def test_default_http_post_does_not_swallow_generic_409(monkeypatch):
+    """重複受理ヘッダーのない一般409は上位へ伝播する。"""
+    error = HTTPError(line.PUSH_URL, 409, "Conflict", {}, None)
+
+    def fail_urlopen(request, timeout):
+        raise error
+
+    monkeypatch.setattr("urllib.request.urlopen", fail_urlopen)
+    with pytest.raises(HTTPError):
+        line._default_http_post(line.PUSH_URL, {}, {})

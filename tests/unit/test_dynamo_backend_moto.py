@@ -11,7 +11,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from sleeptech.memory.client import MemoryClient
+from sleeptech.memory.client import MemoryClient, NotificationClaimBusy
 from sleeptech.memory.dynamo_backend import DynamoBackend
 
 TABLE_NAME = "sleeptech-test"
@@ -67,7 +67,8 @@ def test_full_claim_send_failure_relock_and_complete_cycle(backend):
     # 2. 送信失敗を模して complete せずに終了（何もしない）
 
     # 3. lease 失効前の再 claim → False
-    assert memory.claim_notification(date, slot, now=1050.0, lease_seconds=90) is False
+    with pytest.raises(NotificationClaimBusy):
+        memory.claim_notification(date, slot, now=1050.0, lease_seconds=90)
 
     # 4. lease 失効後の再 claim → True
     assert memory.claim_notification(date, slot, now=1100.0, lease_seconds=90) is True

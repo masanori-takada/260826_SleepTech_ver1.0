@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from typing import Callable
+from urllib.error import HTTPError
 
 PUSH_URL = "https://api.line.me/v2/bot/message/push"
 FEEDBACK_PREFIX = "評価:"
@@ -84,7 +85,12 @@ class LinePushClient:
         }
         if retry_key:
             headers["X-Line-Retry-Key"] = retry_key
-        self._post(PUSH_URL, headers, {"to": self._user_id, "messages": [message]})
+        try:
+            self._post(PUSH_URL, headers, {"to": self._user_id, "messages": [message]})
+        except HTTPError as exc:
+            if exc.code == 409 and _has_accepted_retry_request_id(exc):
+                return
+            raise
 
 
 class FakePushClient:
@@ -105,5 +111,15 @@ def _default_http_post(url: str, headers: dict, body: dict) -> None:
 
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=8) as r:  # noqa: S310 — 固定の LINE 端点
-        r.read()
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:  # noqa: S310 — 固定の LINE 端点
+            r.read()
+    except HTTPError as exc:
+        if exc.code == 409 and _has_accepted_retry_request_id(exc):
+            return
+        raise
+
+
+def _has_accepted_retry_request_id(error: HTTPError) -> bool:
+    """LINEの重複retry key受理応答に含まれる公式ヘッダーを判定する。"""
+    return bool(error.headers and error.headers.get("X-Line-Accepted-Request-Id"))

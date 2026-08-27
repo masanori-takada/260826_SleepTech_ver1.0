@@ -152,6 +152,13 @@ class DynamoBackend:
         item = self._table.get_item(Key={"pk": pk, "sk": sk}).get("Item")
         return json.loads(item["json"]) if item and "json" in item else None
 
+    def get_strong(self, pk: str, sk: str) -> dict | None:
+        """claim競合判定用に強整合性readを行う。"""
+        item = self._table.get_item(
+            Key={"pk": pk, "sk": sk}, ConsistentRead=True
+        ).get("Item")
+        return json.loads(item["json"]) if item and "json" in item else None
+
     def query_range(self, pk: str, start_sk: str, end_sk: str) -> list[dict]:
         """PK 固定かつ SK が範囲内の値を昇順で全件返す。"""
         return self._query(

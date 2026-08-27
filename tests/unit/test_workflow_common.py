@@ -42,3 +42,10 @@ def test_retry_key_example_value_is_v4_shaped_string():
     assert len(groups) == 5
     assert groups[2][0] == "4"
     assert groups[3][0] in "89ab"  # RFC4122 variant ビット
+
+
+def test_retry_key_uses_v2_namespace_to_avoid_old_key_reuse():
+    """v2名前空間により旧決定論的キーを再利用しない。"""
+    old_seed = uuid.uuid5(uuid.NAMESPACE_URL, "sleeptech:2026-08-27:NIGHT")
+    old_key = str(uuid.UUID(bytes=old_seed.bytes, version=4))
+    assert retry_key("2026-08-27", "NIGHT") != old_key

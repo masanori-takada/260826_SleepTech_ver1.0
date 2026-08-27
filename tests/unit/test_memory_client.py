@@ -2,7 +2,9 @@
 
 from unittest.mock import Mock, patch
 
-from sleeptech.memory.client import InMemoryBackend, MemoryClient
+import pytest
+
+from sleeptech.memory.client import InMemoryBackend, MemoryClient, NotificationClaimBusy
 from sleeptech.memory.dynamo_backend import DynamoBackend
 from sleeptech.memory.schemas import DailyVital, Feedback, Message, Prediction
 
@@ -116,8 +118,30 @@ def test_idempotency_is_per_date_and_slot():
 def test_notification_claim_is_atomic_and_lease_can_be_reclaimed():
     c = _client()
     assert c.claim_notification("2026-08-26", "NIGHT", now=100, lease_seconds=30) is True
-    assert c.claim_notification("2026-08-26", "NIGHT", now=110, lease_seconds=30) is False
+    with pytest.raises(NotificationClaimBusy):
+        c.claim_notification("2026-08-26", "NIGHT", now=110, lease_seconds=30)
     assert c.claim_notification("2026-08-26", "NIGHT", now=131, lease_seconds=30) is True
+
+
+def test_claim_conflict_uses_backend_strong_read_when_available():
+    """claim失敗後のPENDING判定は専用strong readを使う。"""
+    class StrongReadBackend(InMemoryBackend):
+        def __init__(self):
+            super().__init__()
+            self.strong_read_calls = []
+
+        def get_strong(self, pk, sk):
+            self.strong_read_calls.append((pk, sk))
+            return self.get(pk, sk)
+
+    backend = StrongReadBackend()
+    client = MemoryClient(backend)
+    client.claim_notification("2026-08-26", "NIGHT", now=100, lease_seconds=30)
+
+    with pytest.raises(NotificationClaimBusy):
+        client.claim_notification("2026-08-26", "NIGHT", now=110, lease_seconds=30)
+
+    assert backend.strong_read_calls == [("IDEM#NIGHT", "2026-08-26")]
 
 
 def test_mark_notified_completes_claim_and_is_notified_ignores_pending():
@@ -222,6 +246,19 @@ def test_dynamo_conditional_put_returns_true_or_false_for_typed_failure():
     assert backend.put_conditional("IDEM#NIGHT", "2026-08-26", {"slot": "NIGHT"}) is False
     condition = table.put_item.call_args_list[0].kwargs["ConditionExpression"]
     assert condition.get_expression()["operator"] == "attribute_not_exists"
+
+
+def test_dynamo_strong_read_requests_consistent_read():
+    """claim競合判定用のDynamo readは強整合性を指定する。"""
+    table = Mock()
+    table.get_item.return_value = {"Item": {"json": '{"status": "PENDING"}'}}
+    resource = Mock()
+    resource.Table.return_value = table
+    with patch("boto3.resource", return_value=resource):
+        backend = DynamoBackend("table", "ap-northeast-1")
+
+    assert backend.get_strong("IDEM#NIGHT", "2026-08-26") == {"status": "PENDING"}
+    assert table.get_item.call_args.kwargs["ConsistentRead"] is True
 
 
 def test_dynamo_conditional_put_propagates_non_conditional_error():

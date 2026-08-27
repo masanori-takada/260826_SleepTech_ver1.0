@@ -18,7 +18,7 @@ import uuid
 # 同時に `uuid.UUID(bytes=..., version=4)` の標準ライブラリ処理で v4 形状になる。
 def retry_key(date: str, slot: str) -> str:
     """<date>/<slot> から決定論的な UUID v4 形状の文字列を作る。"""
-    seed = uuid.uuid5(uuid.NAMESPACE_URL, f"sleeptech:{date}:{slot}")
+    seed = uuid.uuid5(uuid.NAMESPACE_URL, f"sleeptech:v2:{date}:{slot}")
     return str(uuid.UUID(bytes=seed.bytes, version=4))
 
 
