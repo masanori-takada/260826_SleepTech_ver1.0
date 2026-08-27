@@ -128,3 +128,36 @@
 - 実AWSでのIAM拒否・TransactionCanceledExceptionの実障害再現は未実施。
 - LINE実機での未紐付けイベント再送とreply失敗後の無返信確認は未実施。
 - `infra/cdk.out`はCDK synthが生成するgitignore対象で、削除は実行ポリシーにより行わず、compileallから除外して検証した。
+
+## Fix Round 3/5: Lambda assetのcompiled artifact除外
+
+### RED
+
+CDKの実stagingを検査するテストを追加した。修正前は`ASSET_EXCLUDES`にcompiled artifact用globがなく、staged assetに複数階層の`__pycache__`が残り、テストが失敗した。`**/__pycache__/**`形式もCDK asset stagingでは機能しないことを実測した。
+
+### GREEN
+
+- `ASSET_EXCLUDES`へ`__pycache__`、`*.pyc`、`*.pyo`、`*.pyd`を追加。
+- CDK basename globの階層横断動作をテストで実証。
+- fresh `cdk synth --strict`後の`infra/cdk.out`を検査し、compiled files `0`件、`__pycache__` `0`ディレクトリを確認。
+- 生成済み`infra/cdk.out`を安全に再生成・クリーン化した後、通常の`python -m compileall -q src infra`が成功。
+
+### Fix Round 3 検証
+
+- RED：compiled artifactテスト `2 failed`
+- GREEN対象テスト：`2 passed`
+- 全pytest：`527 passed`
+- CDK synth関連テスト：`26 passed`
+- `cdk synth --strict`：成功
+- `python -m compileall -q src infra`：成功（synth生成物をクリーン化後）
+- `git diff --check`：成功
+
+### Fix Round 3 変更ファイル
+
+- `infra/stacks/sleeptech_stack.py`
+- `tests/unit/test_infra_synth.py`
+- 本レポート
+
+### Fix Round 3 残課題
+
+- 実AWSへのデプロイ後asset内容確認は未実施。

@@ -315,6 +315,28 @@ def test_synth_asset_root_contains_src_and_all_handler_files():
         assert not (asset_root / development_item).exists()
 
 
+def test_asset_excludes_all_compiled_python_artifacts():
+    assert "**/__pycache__/**" in ASSET_EXCLUDES
+    assert "**/*.pyc" in ASSET_EXCLUDES
+    assert "**/*.pyo" in ASSET_EXCLUDES
+    assert "**/*.pyd" in ASSET_EXCLUDES
+
+
+def test_synth_asset_contains_no_compiled_python_artifacts():
+    staging = AssetStaging(
+        App(),
+        "CompiledArtifactExclusionAsset",
+        source_path=REPO_ROOT,
+        exclude=ASSET_EXCLUDES,
+    )
+    asset_root = Path(staging.absolute_staged_path)
+
+    assert not list(asset_root.rglob("__pycache__"))
+    assert not list(asset_root.rglob("*.pyc"))
+    assert not list(asset_root.rglob("*.pyo"))
+    assert not list(asset_root.rglob("*.pyd"))
+
+
 def test_webhook_role_explicitly_allows_dynamodb_transactions(template):
     policy_text = _secret_policy_text(template, "src.handlers.webhook_handler.handler")
 
