@@ -23,6 +23,7 @@ _ATTACK = re.compile(
 
 _TIME_RE = re.compile(r"(?<!\d)(?:(?P<day>翌)\s*)?(\d{1,2}):(\d{2})(?!\d)")
 _PCT_RE = re.compile(r"(?P<sign>[+-]?)(?P<value>\d{1,3})%")
+_RANGE_PCT_RE = re.compile(r"(?P<low>\d{1,3})\s*[〜～]\s*(?P<high>\d{1,3})%")
 _RELATIVE_NOTE = re.compile(r"(?:本人|あなた)の平常時を\s*100%")
 _FULLWIDTH = str.maketrans("０１２３４５６７８９：％－＋−", "0123456789:%-+-")
 
@@ -148,13 +149,20 @@ def _extract(
     ambiguous = False
     invalid_100 = False
     relative_spans = [match.span() for match in _RELATIVE_NOTE.finditer(normalized)]
+    range_spans = []
+    for match in _RANGE_PCT_RE.finditer(normalized):
+        low, high = int(match.group("low")), int(match.group("high"))
+        percents.update((low, high))
+        range_spans.append(match.span())
     for match in _PCT_RE.finditer(normalized):
+        if any(start <= match.start() < end for start, end in range_spans):
+            continue
         value = int(match.group("value"))
         sign = match.group("sign")
         if sign == "+":
             explicit_positive = True
         if not sign and value != 100 and not re.match(
-            r"\s*(?:の)?低下", normalized[match.end():]
+            r"\s*(?:の)?(?:低下|低下見込み)", normalized[match.end():]
         ):
             ambiguous = True
         if value == 100 and not any(start <= match.start() < end for start, end in relative_spans):
@@ -184,7 +192,7 @@ def validate(text: str, facts: Facts) -> ValidationResult:
         return ValidationResult(False, "numbers")
     if found_pcts and "目安" not in text:
         return ValidationResult(False, "note")
-    if found_pcts and not _RELATIVE_NOTE.search(normalize(text)):
+    if found_pcts and "推定の目安" not in normalize(text) and not _RELATIVE_NOTE.search(normalize(text)):
         return ValidationResult(False, "definition")
 
     wanted_times = {

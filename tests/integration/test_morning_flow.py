@@ -8,7 +8,7 @@ from sleeptech.collectors import ConsentRevokedError
 from sleeptech.config import load_settings
 from sleeptech.llm.client import NullClient
 from sleeptech.memory.client import InMemoryBackend, MemoryClient, NotificationClaimBusy
-from sleeptech.memory.schemas import DailyVital
+from sleeptech.memory.schemas import DailyVital, Feedback, Prediction
 from sleeptech.notifier.line import FakePushClient
 from sleeptech.workflow import morning
 
@@ -122,6 +122,17 @@ def test_saves_prediction_with_curve():
     assert pred.recovery["caffeine_cutoff_h"] is not None
 
 
+def test_morning_applies_offset_only_to_focus_curve():
+    memory = _memory()
+    memory.save_prediction(Prediction(date="2026-08-25", slot="MORNING", mean_drop_pct=0))
+    memory.save_feedback(Feedback(date=DATE, score=1, prediction_date="2026-08-25"))
+    result = morning.run_morning(DATE, _deps(memory=memory))
+    pred = memory.get_prediction(DATE, "MORNING")
+    assert pred.calibration_offset_pct > 0
+    assert pred.range_low_pct <= pred.mean_drop_pct <= pred.range_high_pct
+    assert result["range_low_pct"] <= result["range_high_pct"]
+
+
 def test_no_percentages_when_sleep_data_is_missing():
     """睡眠データが取れないときは予測 % を一切出さない。"""
     push = FakePushClient()
@@ -223,7 +234,7 @@ class ParaphrasingLlm:
         # 必須値（カフェイン推奨・最終摂取・朝光・避光の各時刻）はそのまま含めつつ、
         # 谷の時間帯だけ「〜時から〜時にかけて」という自然な言い換えにする。
         return (
-            f"{self.hour_a}時から{self.hour_b}時にかけて集中力が-{self.required_pct}%ほど"
+            f"{self.hour_a}時から{self.hour_b}時にかけて集中力が11〜21%ほど"
             "落ちやすい見込みです。カフェインは8:00に、13:30までに済ませてください。"
             "朝の光は7:30までに、20:30以降は避光を。"
             "あなたの平常時を100%とした推定の目安です。"

@@ -79,6 +79,7 @@ class BedtimeAdvice:
     mean_drop_pct: int
     curve: list[HourlyDrop]
     status: str
+    raw_mean_drop_pct: float | None = None
 
 
 @dataclass(frozen=True)

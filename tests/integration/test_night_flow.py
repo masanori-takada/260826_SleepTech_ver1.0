@@ -9,7 +9,7 @@ import pytest
 from sleeptech.config import load_settings
 from sleeptech.llm.client import LlmError, NullClient
 from sleeptech.memory.client import InMemoryBackend, MemoryClient, NotificationClaimBusy
-from sleeptech.memory.schemas import DailyVital
+from sleeptech.memory.schemas import DailyVital, Feedback, Prediction
 from sleeptech.notifier.line import FakePushClient, LinePushClient, parse_feedback
 from sleeptech.workflow import night
 
@@ -111,6 +111,19 @@ def test_saves_prediction_and_marks_notified():
     assert pred is not None
     assert pred.bedtime_h is not None
     assert memory.is_notified(DATE, "NIGHT") is True
+
+
+def test_night_saves_raw_calibrated_range_and_confidence():
+    memory = _memory()
+    memory.save_prediction(Prediction(date="2026-08-25", slot="MORNING", mean_drop_pct=0))
+    memory.save_feedback(Feedback(date=DATE, score=1, prediction_date="2026-08-25"))
+    result = night.run_night(DATE, NOW_H, _deps(memory=memory))
+    pred = memory.get_prediction(DATE, "NIGHT")
+    assert result["range_low_pct"] <= result["range_high_pct"]
+    assert pred.raw_mean_drop_pct is not None
+    assert pred.calibrated_mean_drop_pct == pred.mean_drop_pct
+    assert pred.confidence == "low"
+    assert pred.feedback_count == 1
 
 
 def test_second_run_does_not_send_again():
@@ -286,7 +299,7 @@ def test_zero_drop_night_does_not_require_percent_in_facts(monkeypatch):
     result = night.run_night(DATE, NOW_H, _deps(memory=memory, push=push))
 
     assert result["mean_drop_pct"] == 0
-    assert captured["facts"].percents == []
+    assert captured["facts"].percents == [0, 5]
 
 
 def test_zero_drop_night_fallback_avoids_minus_zero_percent():
@@ -299,7 +312,7 @@ def test_zero_drop_night_fallback_avoids_minus_zero_percent():
     assert result["used_fallback"] is True
     text = push.sent[0]["text"]
     assert "-0%" not in text
-    assert "ベストに近い一日になりそうです" in text
+    assert "0〜5%" in text
 
 
 def test_zero_drop_night_llm_success_path_still_passes():

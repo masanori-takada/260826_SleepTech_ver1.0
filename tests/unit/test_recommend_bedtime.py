@@ -114,3 +114,12 @@ def test_unreachable_mean_drop_is_published_conservatively():
     assert got.status == "unreachable"
     assert raw_mean > C.TARGET_DROP_PCT
     assert got.mean_drop_pct == math.ceil(raw_mean)
+
+
+def test_positive_calibration_offset_makes_recommendation_no_later():
+    """正の補正は就寝探索の判定中心値だけを保守側へ動かす。"""
+    base = Baseline(wake_h=31, sleep_h=7, target_sleep_h=7)
+    raw = tp.recommend_bedtime(22.5, base, debt_h=0, calibration_offset_pct=0)
+    corrected = tp.recommend_bedtime(22.5, base, debt_h=0, calibration_offset_pct=8)
+    assert corrected.bedtime_h <= raw.bedtime_h
+    assert corrected.mean_drop_pct >= corrected.raw_mean_drop_pct

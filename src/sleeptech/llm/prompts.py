@@ -19,9 +19,8 @@ _COMMON_RULES = (
     "厳守事項:\n"
     "- 与えられた数値と時刻だけを使うこと。新しい数値・時刻を作ってはならない。\n"
     "- 与えられた数値は省略せず本文に含めること。\n"
-    "- % は「あなたの平常時を100%とした推定の目安」である旨を添えること（省略しないこと）。\n"
-    "- 低下率はマイナス符号を付けて `-12%` の形で書くこと（符号の省略は不可）。"
-    "`12%` のように符号なしで書いてはならない。\n"
+    "- % は睡眠モデルと主観評価による推定幅で、実測の仕事能力ではない旨を添えること。\n"
+    "- 範囲の両端と信頼度を変更・省略しないこと。\n"
     "- 時刻は与えられた表記のまま書くこと。「翌」が付いている時刻から「翌」を"
     "落としてはならない。\n"
     "- 医学的な診断・治療の断定をしないこと。\n"
@@ -42,7 +41,8 @@ MORNING_SYSTEM = (
 )
 
 
-def night_user(advice: BedtimeAdvice, baseline: Baseline, debt_h: float) -> str:
+def night_user(advice: BedtimeAdvice, baseline: Baseline, debt_h: float,
+               range_low=None, range_high=None, confidence=None, feedback_count=None) -> str:
     """夜フローのユーザープロンプト。確定値のみを列挙する。"""
     status_note = {
         "ok": "この時刻までに寝れば目標を満たせる",
@@ -53,7 +53,10 @@ def night_user(advice: BedtimeAdvice, baseline: Baseline, debt_h: float) -> str:
     lines = [f"推奨就寝時刻: {fmt_hm(advice.bedtime_h)}"]
     # I4対応: 低下率0%のときは % を本文に書かせない（「0%」の明記を必須にすると
     # 平常な晩ほど不自然な文章を強いることになり、ガードレールにも落ちやすくなる）。
-    if advice.mean_drop_pct != 0:
+    if range_low is not None and range_high is not None:
+        lines.append(f"明日の主要時間帯の低下見込み: {range_low}〜{range_high}%")
+        lines.append(f"信頼度: {confidence}（評価データ{feedback_count}件）")
+    elif advice.mean_drop_pct != 0:
         lines.append(f"明日の主要時間帯の平均低下率: -{advice.mean_drop_pct}%")
     else:
         lines.append("明日の主要時間帯の平均低下率: ほぼ低下なし（%の数値は本文に書かないこと）")
@@ -64,9 +67,8 @@ def night_user(advice: BedtimeAdvice, baseline: Baseline, debt_h: float) -> str:
     return "\n".join(lines)
 
 
-def morning_user(
-    curve: list[HourlyDrop], recovery_plan: RecoveryPlan, vital: DailyVital
-) -> str:
+def morning_user(curve: list[HourlyDrop], recovery_plan: RecoveryPlan, vital: DailyVital,
+                 ranges=None, confidence=None, feedback_count=None) -> str:
     """朝フローのユーザープロンプト。確定値のみを列挙する。"""
     lines: list[str] = []
 
@@ -78,9 +80,15 @@ def morning_user(
     if vital.awakenings is not None:
         lines.append(f"中途覚醒: {vital.awakenings}回")
 
-    lines.append("今日の時間帯別の低下率:")
-    for d in curve:
-        lines.append(f"  {d.hour}時台: 集中力 -{d.focus_pct}% / 気分 -{d.mood_pct}%")
+    lines.append("今日の時間帯別の低下見込み:")
+    for i, d in enumerate(curve):
+        if ranges is None:
+            lines.append(f"  {d.hour}時台: 集中力 -{d.focus_pct}% / 気分 -{d.mood_pct}%")
+        else:
+            low, high = ranges[i]
+            lines.append(f"  {d.hour}時台: 集中力 {low}〜{high}%")
+    if ranges is not None:
+        lines.append(f"信頼度: {confidence}（評価データ{feedback_count}件）")
 
     if recovery_plan.caffeine_times_h:
         times = "、".join(fmt_hm_plain(t) for t in recovery_plan.caffeine_times_h)

@@ -6,13 +6,27 @@ from sleeptech.model import two_process as tp
 from sleeptech.timefmt import fmt_hm, fmt_hm_plain
 
 
-_ESTIMATE_NOTE = "※あなたの平常時を100%とした推定の目安です"
+_ESTIMATE_NOTE = "※睡眠モデルと主観評価による推定の目安（範囲）です"
+_LEGACY_ESTIMATE_NOTE = "※あなたの平常時を100%とした推定の目安です"
+_ABILITY_NOTE = "※実測の仕事能力ではありません"
+_UNUSED_NOTE = "※中途覚醒・HRV・心拍数は現行の%計算には使っていません"
 _LOW_DATA_NOTE = "※まだデータが少ないため精度は低めです"
 
 
-def night_text(advice, baseline, debt_h: float) -> str:
+def night_text(advice, baseline, debt_h: float, range_low=None, range_high=None,
+               confidence="low", feedback_count=0) -> str:
     """夜のテンプレート文を返す。"""
     time_s = fmt_hm(advice.bedtime_h)
+    if range_low is not None and range_high is not None:
+        label = {"low": "低", "medium": "中", "high": "高"}.get(confidence, confidence)
+        return "\n".join([
+            f"起床目安 {fmt_hm_plain(baseline.wake_h)}・{baseline.effective_target_sleep_h:.1f}時間の睡眠を確保するなら、遅くとも{time_s}までに就寝。",
+            f"明日の主要時間帯の低下見込みは{range_low}〜{range_high}%です。",
+            f"信頼度：{label}（評価データ{feedback_count}件）",
+            _ESTIMATE_NOTE,
+            _ABILITY_NOTE,
+            _UNUSED_NOTE,
+        ])
     lines: list[str] = []
 
     if debt_h > 0.5:
@@ -41,14 +55,22 @@ def night_text(advice, baseline, debt_h: float) -> str:
         lines.append(f"▶ 今夜は {time_s} までに就寝")
         lines.append(f"守れれば明日は一日ベスト比 -{advice.mean_drop_pct}% 以内の見込みです。")
 
-    lines.append(_ESTIMATE_NOTE)
+    lines.append(_LEGACY_ESTIMATE_NOTE)
     if baseline.is_default:
         lines.append(_LOW_DATA_NOTE)
     return "\n".join(lines)
 
 
-def morning_text(curve, recovery_plan, vital) -> str:
+def morning_text(curve, ranges_or_plan, recovery_plan=None, vital=None,
+                 confidence=None, feedback_count=0) -> str:
     """朝の予測カーブとリカバリー行動のテンプレート文を返す。"""
+    legacy = vital is None
+    if legacy:
+        vital = recovery_plan
+        recovery_plan = ranges_or_plan
+        ranges = [(d.focus_pct, d.focus_pct) for d in curve]
+    else:
+        ranges = ranges_or_plan
     lines: list[str] = []
     if vital.total_sleep_min is not None:
         hours, minutes = divmod(int(vital.total_sleep_min), 60)
@@ -66,9 +88,10 @@ def morning_text(curve, recovery_plan, vital) -> str:
     # 影響で起床直後が常に最大になり、「← 谷」が毎回起床時刻に付いてしまうため。
     main_window = tp.main_window_slice(curve) if curve else []
     worst = max(main_window, key=lambda drop: drop.focus_pct) if main_window else None
-    for drop in curve:
+    for index, drop in enumerate(curve):
         mark = "  ← 谷" if drop is worst and drop.focus_pct > 0 else ""
-        lines.append(f"  {drop.hour}時台  -{drop.focus_pct}%{mark}")
+        low, high = ranges[index]
+        lines.append(f"  {drop.hour}時台　低下見込み {low}〜{high}%{mark}")
 
     lines.append("")
     lines.append("リカバリー")
@@ -81,5 +104,10 @@ def morning_text(curve, recovery_plan, vital) -> str:
     light = fmt_hm_plain(recovery_plan.light_morning_h)
     avoid = fmt_hm_plain(recovery_plan.light_avoid_after_h)
     lines.append(f"☀ {light}までに屋外光を10分。{avoid}以降は画面を暗くすると巻き返せます。")
-    lines.extend(["", _ESTIMATE_NOTE])
+    if legacy:
+        lines.extend(["", "※あなたの平常時を100%とした推定の目安です"])
+    else:
+        label = {"low": "低", "medium": "中", "high": "高"}.get(confidence, confidence)
+        lines.extend(["", f"信頼度：{label}（評価データ{feedback_count}件）", _ESTIMATE_NOTE,
+                      _ABILITY_NOTE, _UNUSED_NOTE])
     return "\n".join(lines)

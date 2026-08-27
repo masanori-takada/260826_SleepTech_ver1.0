@@ -133,3 +133,26 @@ def test_morning_text_does_not_raise_for_various_sleep_durations():
     for sleep_h in (5.0, 7.0, 8.0):
         curve = _curve_for(sleep_h)
         fallback.morning_text(curve, PLAN, VITAL)
+
+
+def test_night_text_explains_sleep_target_range_and_confidence():
+    text = fallback.night_text(
+        ADVICE, BASE, debt_h=1.0, range_low=3, range_high=13,
+        confidence="low", feedback_count=2,
+    )
+    assert "7.5時間" in text
+    assert "3〜13%" in text
+    assert "信頼度：低" in text
+    assert "評価データ2件" in text
+    assert "平常時100%" not in text
+    assert "目標を満たせます" not in text
+
+
+def test_morning_text_uses_ranges_not_single_percent():
+    ranges = [(3, 13)] * len(CURVE)
+    text = fallback.morning_text(CURVE, ranges, PLAN, VITAL, "low", 2)
+    assert "7時台" in text
+    assert "3〜13%" in text
+    assert "実測の仕事能力ではありません" in text
+    assert "中途覚醒・HRV・心拍数は現行の%計算には使っていません" in text
+    assert "-8%" not in text

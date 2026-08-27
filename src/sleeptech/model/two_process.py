@@ -201,14 +201,16 @@ def recommend_bedtime(
     if baseline.target_sleep_h is not None:
         limit_h = min(limit_h, baseline.wake_h - baseline.effective_target_sleep_h)
 
-    def _evaluate(t: float) -> tuple[list[HourlyDrop], float]:
+    def _evaluate(t: float) -> tuple[list[HourlyDrop], float, float]:
         curve = predict_curve_from_bedtime(t, baseline, debt_h, rem_min, deep_min)
-        return curve, mean_drop_in_main_window(curve, baseline.wake_h)
+        raw_mean = mean_drop_in_main_window(curve, baseline.wake_h)
+        corrected_mean = max(0.0, min(100.0, raw_mean + calibration_offset_pct))
+        return curve, raw_mean, corrected_mean
 
     # 既に探索区間の終端を過ぎている → 今すぐ寝るべき
     if now_h >= limit_h:
-        curve, mean = _evaluate(now_h)
-        return BedtimeAdvice(now_h, math.ceil(mean), curve, "too_late")
+        curve, raw_mean, mean = _evaluate(now_h)
+        return BedtimeAdvice(now_h, math.ceil(mean), curve, "too_late", raw_mean)
 
     step_h = C.SCAN_STEP_MIN / 60.0
     span_h = limit_h - now_h
@@ -217,7 +219,7 @@ def recommend_bedtime(
     candidates: list[tuple[float, float, list[HourlyDrop]]] = []
     for i in range(n_steps + 1):
         t = now_h + i * step_h
-        curve, mean = _evaluate(t)
+        curve, raw_mean, mean = _evaluate(t)
         candidates.append((t, mean, curve))
 
     # 過小睡眠を勧めないため、平常時睡眠時間を確保できる時刻を上限とする
@@ -226,8 +228,10 @@ def recommend_bedtime(
     if passing:
         eligible = [c for c in passing if c[0] <= comfortable_h] or passing
         best = max(eligible, key=lambda c: c[0])
-        return BedtimeAdvice(round(best[0], 3), math.ceil(best[1]), best[2], "ok")
+        raw_mean = mean_drop_in_main_window(best[2], baseline.wake_h)
+        return BedtimeAdvice(round(best[0], 3), math.ceil(best[1]), best[2], "ok", raw_mean)
 
     # 閾値に届かない → 低下率が最小の時刻を返す
     best = min(candidates, key=lambda c: (c[1], c[0]))
-    return BedtimeAdvice(round(best[0], 3), math.ceil(best[1]), best[2], "unreachable")
+    raw_mean = mean_drop_in_main_window(best[2], baseline.wake_h)
+    return BedtimeAdvice(round(best[0], 3), math.ceil(best[1]), best[2], "unreachable", raw_mean)

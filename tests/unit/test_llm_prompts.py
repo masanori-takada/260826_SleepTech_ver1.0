@@ -178,3 +178,10 @@ def test_unsigned_percent_is_rejected():
     result = validate(text, facts)
     assert result.passed is False
     assert result.reason == "numbers"
+
+
+def test_system_prompts_require_range_endpoints_and_confidence():
+    assert "範囲の両端" in NIGHT_SYSTEM
+    assert "範囲の両端" in MORNING_SYSTEM
+    assert "信頼度" in NIGHT_SYSTEM
+    assert "信頼度" in MORNING_SYSTEM

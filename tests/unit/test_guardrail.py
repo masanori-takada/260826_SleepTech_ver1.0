@@ -205,3 +205,9 @@ def test_plain_100_percent_without_relative_definition_is_rejected():
     got = v.validate(f"23:30なら-8%です{NOTE}。100%です。", FACTS)
     assert got.passed is False
     assert got.reason == "numbers"
+
+
+def test_range_endpoints_are_required_and_extra_percent_is_rejected():
+    facts = v.Facts(times=[25.5], percents=[3, 13], allowed_percents=[3, 13])
+    assert v.validate("翌 1:30、低下見込み3〜13%。推定の目安です", facts).passed
+    assert not v.validate("翌 1:30、低下見込み3〜18%。推定の目安です", facts).passed
