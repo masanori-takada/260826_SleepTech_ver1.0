@@ -41,11 +41,11 @@ def fit_offset(pairs: list[tuple[int, float]]) -> float:
 
 def confidence_for(sleep_days: int, feedback_count: int) -> tuple[str, int]:
     """睡眠履歴とフィードバック数から信頼度と表示マージンを返す。"""
-    if sleep_days < 7 or feedback_count < 7:
-        return "low", 5
-    if feedback_count < 30:
+    if sleep_days >= 14 and feedback_count >= 30:
+        return "high", 2
+    if sleep_days >= 7 and feedback_count >= 7:
         return "medium", 3
-    return "high", 2
+    return "low", 5
 
 
 def apply_offset(value: float, offset_pct: float) -> int:

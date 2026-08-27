@@ -22,3 +22,21 @@ def test_load_calibration_ignores_missing_prediction():
     memory = MemoryClient(InMemoryBackend())
     memory.save_feedback(Feedback(date="2026-08-27", score=1))
     assert load_calibration(memory, sleep_days=14).feedback_count == 0
+
+
+@pytest.mark.parametrize("bad_score", [None, "1", True, False, float("nan"), float("inf"), float("-inf")])
+def test_load_calibration_ignores_invalid_scores(bad_score):
+    memory = MemoryClient(InMemoryBackend())
+    memory.save_prediction(Prediction(date="2026-08-26", slot="MORNING", mean_drop_pct=5))
+    memory.save_feedback(Feedback(date="2026-08-27", score=bad_score))
+    assert load_calibration(memory, sleep_days=14).feedback_count == 0
+
+
+@pytest.mark.parametrize("bad_predicted", [None, "5", True, False, float("nan"), float("inf"), float("-inf")])
+def test_load_calibration_ignores_invalid_predictions(bad_predicted):
+    memory = MemoryClient(InMemoryBackend())
+    memory.save_prediction(Prediction(
+        date="2026-08-26", slot="MORNING", mean_drop_pct=bad_predicted,
+    ))
+    memory.save_feedback(Feedback(date="2026-08-27", score=1))
+    assert load_calibration(memory, sleep_days=14).feedback_count == 0

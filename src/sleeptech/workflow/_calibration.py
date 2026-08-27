@@ -1,11 +1,19 @@
 """ワークフローから補正履歴を組み立てる処理。"""
 
+import math
+from numbers import Real
+
 from sleeptech.model.calibration import (
     MAX_FEEDBACK,
     Calibration,
     confidence_for,
     fit_offset,
 )
+
+
+def _is_finite_real(value: object) -> bool:
+    """boolを除く有限な実数か判定する。"""
+    return isinstance(value, Real) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def load_calibration(memory, sleep_days: int) -> Calibration:
@@ -20,7 +28,9 @@ def load_calibration(memory, sleep_days: int) -> Calibration:
             if prediction.calibrated_mean_drop_pct is not None
             else prediction.mean_drop_pct
         )
-        if not 1 <= feedback.score <= 5 or not 0 <= predicted <= 100:
+        if not _is_finite_real(feedback.score) or feedback.score not in (1, 2, 3, 4, 5):
+            continue
+        if not _is_finite_real(predicted) or not 0 <= predicted <= 100:
             continue
         pairs.append((feedback.score, float(predicted)))
     confidence, margin = confidence_for(sleep_days, len(pairs))

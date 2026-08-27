@@ -26,7 +26,9 @@ def test_offset_is_capped_both_directions():
 @pytest.mark.parametrize(
     "sleep_days,count,want",
     [(6, 30, ("low", 5)), (14, 2, ("low", 5)),
-     (14, 7, ("medium", 3)), (14, 30, ("high", 2))],
+     (14, 7, ("medium", 3)), (7, 30, ("medium", 3)),
+     (13, 30, ("medium", 3)), (14, 29, ("medium", 3)),
+     (14, 30, ("high", 2))],
 )
 def test_confidence(sleep_days, count, want):
     assert confidence_for(sleep_days, count) == want
