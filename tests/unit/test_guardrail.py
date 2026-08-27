@@ -280,3 +280,29 @@ def test_unbound_extra_range_is_rejected_when_hourly_ranges_are_required():
         "参考 3〜13% 推定の目安です"
     )
     assert not v.validate(text, facts).passed
+
+
+@pytest.mark.parametrize("old_note", [
+    "あなたの平常時を１００％とした推定の目安です",
+    "あなたの平常時を 100 % とした推定の目安です",
+])
+def test_legacy_baseline_note_normalization_is_rejected(old_note):
+    text = f"低下見込み3〜13%。推定の目安です。{old_note}"
+    assert not v.validate(text, v.Facts()).passed
+
+
+@pytest.mark.parametrize("extra_range", [
+    "参考 4〜14 %",
+    "参考 3 ～ 13 %",
+    "参考 3-13%",
+])
+def test_unbound_range_variants_are_rejected(extra_range):
+    facts = v.Facts(required_hourly_ranges=[(7, (3, 13)), (8, (4, 14))])
+    text = f"7時台 低下見込み3〜13% 8時台 低下見込み4〜14% {extra_range} 推定の目安です"
+    assert not v.validate(text, facts).passed
+
+
+def test_negative_single_percent_and_time_hyphen_are_not_ranges():
+    facts = v.Facts(times=[23.5], percents=[8])
+    text = "23:30-24:30まで、低下見込み-8%。推定の目安です"
+    assert v.validate(text, facts).passed

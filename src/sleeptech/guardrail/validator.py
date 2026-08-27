@@ -23,10 +23,14 @@ _ATTACK = re.compile(
 
 _TIME_RE = re.compile(r"(?<!\d)(?:(?P<day>翌)\s*)?(\d{1,2}):(\d{2})(?!\d)")
 _PCT_RE = re.compile(r"(?P<sign>[+-]?)(?P<value>\d{1,3})%")
-_RANGE_PCT_RE = re.compile(r"(?P<low>\d{1,3})\s*[〜～]\s*(?P<high>\d{1,3})%")
+_RANGE_PCT_RE = re.compile(
+    r"(?P<low>\d{1,3})\s*(?:[〜～]|[\-－−])\s*"
+    r"(?P<high>\d{1,3})\s*%"
+)
 _HOURLY_RANGE_RE = re.compile(
     r"(?P<hour>\d{1,2})時台[^\d%]{0,20}"
-    r"(?P<low>\d{1,3})\s*[〜～]\s*(?P<high>\d{1,3})%"
+    r"(?P<low>\d{1,3})\s*(?:[〜～]|[\-－−])\s*"
+    r"(?P<high>\d{1,3})\s*%"
 )
 _CONFIDENCE_RE = re.compile(r"信頼度\s*[:：]\s*(?P<label>低|中|高)")
 _COUNT_RE = re.compile(r"評価データ\s*(?P<count>\d+)件")
@@ -202,7 +206,8 @@ def validate(text: str, facts: Facts) -> ValidationResult:
     """語句検査と確定値の過不足照合を行う。"""
     if not text or not text.strip():
         return ValidationResult(False, "empty")
-    if _FORBIDDEN_DISPLAY.search(text):
+    normalized_text = normalize(text)
+    if _FORBIDDEN_DISPLAY.search(normalized_text):
         return ValidationResult(False, "forbidden_display")
     for note in facts.required_notes:
         if text.count(note) != 1:
