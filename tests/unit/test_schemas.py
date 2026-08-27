@@ -67,6 +67,12 @@ def test_legacy_feedback_derives_dates():
     assert feedback.effective_prediction_date == "2026-08-26"
 
 
+def test_feedback_preserves_source_event_id_for_idempotency():
+    feedback = Feedback(date="2026-08-27", score=1, source_event_id="event-1")
+
+    assert Feedback.from_dict(feedback.to_dict()).source_event_id == "event-1"
+
+
 def test_prediction_reads_old_record_without_new_fields():
     pred = Prediction.from_dict({"date": "2026-08-26", "slot": "MORNING", "mean_drop_pct": 8})
     assert pred.raw_mean_drop_pct is None

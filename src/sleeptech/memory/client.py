@@ -10,6 +10,7 @@ from sleeptech.memory.schemas import DailyVital, Feedback, Message, Prediction
 
 PK_VITAL = "VITAL"
 PK_FEEDBACK = "FEEDBACK"
+PK_FEEDBACK_EVENT = "IDEM#FEEDBACK"
 PK_CONFIG = "CONFIG"
 SK_META = "META"
 
@@ -34,16 +35,31 @@ class InMemoryBackend:
     """テスト用の DynamoBackend 互換実装。"""
 
     def __init__(self) -> None:
+        import threading
+
         self._items: dict[tuple[str, str], dict] = {}
+        self._lock = threading.Lock()
 
     def put(self, pk: str, sk: str, value: dict) -> None:
         self._items[(pk, sk)] = value
 
     def put_conditional(self, pk: str, sk: str, value: dict) -> bool:
-        if (pk, sk) in self._items:
-            return False
-        self._items[(pk, sk)] = value
-        return True
+        with self._lock:
+            if (pk, sk) in self._items:
+                return False
+            self._items[(pk, sk)] = value
+            return True
+
+    def put_feedback_once(self, feedback_value: dict, event_id: str) -> bool:
+        """評価とイベントclaimを未登録時だけ同じロック内で保存する。"""
+        feedback_key = (PK_FEEDBACK, feedback_value["date"])
+        event_key = (PK_FEEDBACK_EVENT, event_id)
+        with self._lock:
+            if feedback_key in self._items or event_key in self._items:
+                return False
+            self._items[feedback_key] = feedback_value
+            self._items[event_key] = {"event_id": event_id, "status": "PROCESSED"}
+            return True
 
     def claim(self, pk: str, sk: str, value: dict, now: float, lease_seconds: int) -> bool:
         current = self._items.get((pk, sk))
@@ -126,6 +142,31 @@ class MemoryClient:
 
     def save_feedback(self, fb: Feedback) -> None:
         self._backend.put(PK_FEEDBACK, fb.date, fb.to_dict())
+
+    def save_feedback_once(self, fb: Feedback) -> bool:
+        """評価キーとイベントIDを重複なく保存し、保存できたかを返す。"""
+        if not fb.source_event_id:
+            raise ValueError("source_event_id is required")
+        atomic_save = getattr(self._backend, "put_feedback_once", None)
+        if callable(atomic_save):
+            return atomic_save(fb.to_dict(), fb.source_event_id)
+        saved = self._backend.put_conditional(PK_FEEDBACK, fb.date, fb.to_dict())
+        if not saved:
+            return False
+        return self._backend.put_conditional(
+            PK_FEEDBACK_EVENT,
+            fb.source_event_id,
+            {"event_id": fb.source_event_id, "status": "PROCESSED"},
+        )
+
+    def is_feedback_event_processed(self, event_id: str) -> bool:
+        """評価イベントが処理済みかを確認する。旧Feedbackも後方互換で調べる。"""
+        if self._backend.get(PK_FEEDBACK_EVENT, event_id) is not None:
+            return True
+        return any(
+            feedback.source_event_id == event_id
+            for feedback in self.get_feedback_desc(100000)
+        )
 
     def get_feedback(self, date: str) -> Feedback | None:
         raw = self._backend.get(PK_FEEDBACK, date)

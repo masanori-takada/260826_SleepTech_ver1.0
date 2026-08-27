@@ -79,6 +79,29 @@ class DynamoBackend:
             return False
         return True
 
+    def put_feedback_once(self, feedback_value: dict, event_id: str) -> bool:
+        """評価とイベントclaimをDynamoDBトランザクションで一度だけ保存する。"""
+        feedback_item = self._item("FEEDBACK", feedback_value["date"], feedback_value)
+        event_item = self._item(
+            "IDEM#FEEDBACK", event_id,
+            {"event_id": event_id, "status": "PROCESSED"},
+        )
+        try:
+            self._table.meta.client.transact_write_items(
+                TransactItems=[
+                    {"Put": {"TableName": self._table.name, "Item": feedback_item,
+                             "ConditionExpression": "attribute_not_exists(pk)"}},
+                    {"Put": {"TableName": self._table.name, "Item": event_item,
+                             "ConditionExpression": "attribute_not_exists(pk)"}},
+                ]
+            )
+        except (
+            self._table.meta.client.exceptions.TransactionCanceledException,
+            self._table.meta.client.exceptions.ConditionalCheckFailedException,
+        ):
+            return False
+        return True
+
     def put_json_if_match(
         self, pk: str, sk: str, value: dict, expected_json: str | None
     ) -> bool:

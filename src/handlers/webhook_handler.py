@@ -52,6 +52,8 @@ class AuthorizedText:
 
     text: str
     reply_token: str
+    webhook_event_id: str | None
+    webhook_event_id_present: bool
 
 
 def _response(status_code: int, error: str) -> dict:
@@ -169,6 +171,11 @@ def resolve_feedback_target(memory, today: str) -> FeedbackTarget | None:
     return None
 
 
+def feedback_event_processed(memory, event_id: str) -> bool:
+    """評価イベントの処理済み状態を確認する。"""
+    return memory.is_feedback_event_processed(event_id)
+
+
 def _texts(payload: dict) -> list[str]:
     """解析済みWebhook payloadからテキストメッセージ本文を取り出す。
 
@@ -218,6 +225,13 @@ def _authorized_texts(payload: dict, user_id: str) -> list[AuthorizedText]:
             out.append(AuthorizedText(
                 text=msg["text"],
                 reply_token=reply_token if isinstance(reply_token, str) else "",
+                webhook_event_id=(
+                    ev.get("webhookEventId")
+                    if isinstance(ev.get("webhookEventId"), str)
+                    and ev.get("webhookEventId").strip()
+                    else None
+                ),
+                webhook_event_id_present="webhookEventId" in ev,
             ))
     return out
 
@@ -265,18 +279,37 @@ def handler(event, context=None) -> dict:
     for authorized in _authorized_texts(payload, allowed_user_id):
         score = parse_feedback(authorized.text)
         if score is not None:
+            if authorized.webhook_event_id_present and authorized.webhook_event_id is None:
+                log.log("feedback_event_invalid")
+                continue
+            event_id = authorized.webhook_event_id or (
+                f"legacy-reply-token:{authorized.reply_token}"
+                if authorized.reply_token else None
+            )
+            if event_id is None:
+                log.log("feedback_event_invalid")
+                continue
             memory = hd._memory(settings)
+            if feedback_event_processed(memory, event_id):
+                log.log("feedback_duplicate")
+                handled.append("feedback_duplicate")
+                continue
             target = resolve_feedback_target(memory, hd.origin_date(now))
             if target:
-                memory.save_feedback(
+                saved = memory.save_feedback_once(
                     Feedback(
                         date=target.evaluated_date,
                         evaluated_date=target.evaluated_date,
                         prediction_date=target.prediction_date,
                         score=score,
                         answered_at=now.isoformat(timespec="seconds"),
+                        source_event_id=event_id,
                     )
                 )
+                if not saved:
+                    log.log("feedback_duplicate")
+                    handled.append("feedback_duplicate")
+                    continue
                 log.log("feedback_saved", date=target.evaluated_date, score=score)
                 if authorized.reply_token:
                     if reply_client is None:

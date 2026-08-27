@@ -43,3 +43,46 @@
 
 - 実機LINE、DynamoDB、CloudWatchでの本番相当の一連の確認はTask 5の範囲。
 - LINE Official Account Managerの汎用自動応答無効化は運用設定作業として未実施。
+
+## Fix Round 1/5: 再送冪等性
+
+### RED
+
+同一batchの同一`webhookEventId`、同じ署名済みイベントのhandler再送、欠損IDの安全方針、Feedbackキーの原子的保存をテストに追加した。修正前は次の失敗を確認した。
+
+- `Feedback`に`source_event_id`がなく、イベントIDを保存できない。
+- `MemoryClient.save_feedback_once()`と処理済みイベント判定がなく、原子的claimができない。
+- 同一batchの2件目が当日候補から前日候補へフォールスルーし、前日Feedbackを誤保存する。
+- 同じイベントのhandler再送で、8/26の候補へ誤保存・重複返信する。
+- `webhookEventId`なしでも従来処理され、再送保護ができない。
+
+### GREEN
+
+- `Feedback.source_event_id`を追加し、旧Feedbackの読み取りを維持。
+- InMemoryBackendではロック内、DynamoDBでは`TransactWriteItems`と`attribute_not_exists`条件で、Feedbackとイベントclaimを原子的に保存。
+- 正規イベントIDの処理済み判定を候補解決より前に行い、duplicateはHTTP 200・無返信・別日フォールスルーなし。
+- reply失敗後もイベントclaimを残し、同じイベントの再送は再返信しない方針とした。
+- `webhookEventId`欠損時は既存fixture互換のためreplyTokenを限定的なlegacy IDとして利用し、replyTokenもない場合または明示的に不正なIDの場合は保存・返信せずHTTP 200とする。
+
+### Fix Round 1 検証
+
+- 対象テスト：`159 passed`
+- 全pytest：`519 passed`
+- `python -m compileall -q src infra`：成功
+- `git diff --check`：成功
+
+### Fix Round 1 変更ファイル
+
+- `src/sleeptech/memory/schemas.py`
+- `src/sleeptech/memory/client.py`
+- `src/sleeptech/memory/dynamo_backend.py`
+- `src/handlers/webhook_handler.py`
+- `tests/unit/test_schemas.py`
+- `tests/unit/test_memory_client.py`
+- `tests/integration/test_webhook.py`
+- `tests/unit/test_handlers.py`
+
+### Fix Round 1 残課題
+
+- DynamoDB実環境でのトランザクション競合・再送検証は未実施。
+- LINE実機での`webhookEventId`欠損/再送挙動確認は未実施。

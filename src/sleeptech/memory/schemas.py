@@ -215,6 +215,7 @@ class Feedback:
     answered_at: str | None = None
     evaluated_date: str | None = None
     prediction_date: str | None = None
+    source_event_id: str | None = None
 
     @property
     def effective_evaluated_date(self) -> str:

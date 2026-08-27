@@ -715,6 +715,13 @@ def _feedback_webhook_event(text, reply_token):
     }])
 
 
+def _feedback_webhook_event_with_id(text, reply_token, event_id):
+    event = _feedback_webhook_event(text, reply_token)
+    payload = json.loads(event["body"])
+    payload["events"][0]["webhookEventId"] = event_id
+    return _signed_webhook_event(payload["events"])
+
+
 def test_feedback_is_saved_and_acknowledged_once(monkeypatch):
     _patch_webhook_dependencies(monkeypatch)
     memory = MemoryClient(InMemoryBackend())
@@ -775,3 +782,75 @@ def test_feedback_reply_failure_keeps_saved_feedback_and_returns_200(monkeypatch
 
     assert response["statusCode"] == 200
     assert memory.get_feedback("2026-08-27").score == 1
+
+
+def test_same_batch_duplicate_event_id_saves_and_replies_only_once(monkeypatch):
+    _patch_webhook_dependencies(monkeypatch)
+    memory = MemoryClient(InMemoryBackend())
+    memory.save_message(Message(date="2026-08-27", slot="NIGHT", delivered=True))
+    memory.save_prediction(Prediction(date="2026-08-26", slot="MORNING", mean_drop_pct=8))
+    replies = []
+
+    class FakeReplyClient:
+        def reply(self, reply_token, message):
+            replies.append((reply_token, message["text"]))
+
+    monkeypatch.setattr(wh.hd, "_memory", lambda settings: memory)
+    monkeypatch.setattr(wh.hd, "_push_from_secret", lambda secret_data: FakeReplyClient())
+    event = _feedback_webhook_event_with_id("評価:1", "r1", "event-1")
+    payload = json.loads(event["body"])
+    payload["events"].append(dict(payload["events"][0]))
+    duplicate_batch = _signed_webhook_event(payload["events"])
+
+    response = wh.handler(duplicate_batch)
+
+    assert response["statusCode"] == 200
+    assert memory.get_feedback("2026-08-27").source_event_id == "event-1"
+    assert replies == [("r1", "評価1を記録しました。次回以降の予測補正に反映します。")]
+
+
+def test_same_event_retry_does_not_pollute_previous_feedback_candidate(monkeypatch):
+    _patch_webhook_dependencies(monkeypatch)
+    memory = MemoryClient(InMemoryBackend())
+    for date in ("2026-08-27", "2026-08-26"):
+        memory.save_message(Message(date=date, slot="NIGHT", delivered=True))
+    for date in ("2026-08-26", "2026-08-25"):
+        memory.save_prediction(Prediction(date=date, slot="MORNING", mean_drop_pct=8))
+    replies = []
+
+    class FakeReplyClient:
+        def reply(self, reply_token, message):
+            replies.append((reply_token, message["text"]))
+
+    monkeypatch.setattr(wh.hd, "_memory", lambda settings: memory)
+    monkeypatch.setattr(wh.hd, "_push_from_secret", lambda secret_data: FakeReplyClient())
+    event = _feedback_webhook_event_with_id("評価:1", "r1", "event-1")
+
+    assert wh.handler(event)["statusCode"] == 200
+    assert wh.handler(event)["statusCode"] == 200
+
+    assert memory.get_feedback("2026-08-27").source_event_id == "event-1"
+    assert memory.get_feedback("2026-08-26") is None
+    assert len(replies) == 1
+
+
+def test_feedback_without_valid_event_id_is_ignored_safely(monkeypatch):
+    _patch_webhook_dependencies(monkeypatch)
+    memory = MemoryClient(InMemoryBackend())
+    memory.save_message(Message(date="2026-08-27", slot="NIGHT", delivered=True))
+    memory.save_prediction(Prediction(date="2026-08-26", slot="MORNING", mean_drop_pct=8))
+    replies = []
+
+    class FakeReplyClient:
+        def reply(self, reply_token, message):
+            replies.append((reply_token, message["text"]))
+
+    monkeypatch.setattr(wh.hd, "_memory", lambda settings: memory)
+    monkeypatch.setattr(wh.hd, "_push_from_secret", lambda secret_data: FakeReplyClient())
+    event = _feedback_webhook_event("評価:1", "")
+
+    response = wh.handler(event)
+
+    assert response["statusCode"] == 200
+    assert memory.get_feedback("2026-08-27") is None
+    assert replies == []
