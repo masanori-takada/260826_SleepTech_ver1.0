@@ -30,7 +30,7 @@ _HOURLY_RANGE_RE = re.compile(
 )
 _CONFIDENCE_RE = re.compile(r"信頼度\s*[:：]\s*(?P<label>低|中|高)")
 _COUNT_RE = re.compile(r"評価データ\s*(?P<count>\d+)件")
-_FORBIDDEN_DISPLAY = re.compile(r"平常時100%|目標を満たせます")
+_FORBIDDEN_DISPLAY = re.compile(r"平常時(?:を)?\s*100%|目標を満たせます")
 REQUIRED_NOTES = (
     "実測の仕事能力ではありません",
     "中途覚醒・HRV・心拍数は現行の%計算には使っていません",
@@ -149,7 +149,7 @@ def _time_key(t_h: float) -> str:
 
 def _extract(
     text: str, require_day_prefix: bool
-) -> tuple[set[tuple[str, bool]], set[int], bool, bool, bool, list[tuple[int, int]], list[tuple[int, tuple[int, int]]]]:
+) -> tuple[set[tuple[str, bool]], set[int], bool, bool, bool, list[tuple[int, int]], list[tuple[int, tuple[int, int]]], bool]:
     """本文から時刻・%・符号違反・曖昧表現・不正100%を抽出する。"""
     normalized = normalize(text)
     times: set[tuple[str, bool]] = set()
@@ -176,6 +176,11 @@ def _extract(
         (int(match.group("hour")), (int(match.group("low")), int(match.group("high"))))
         for match in _HOURLY_RANGE_RE.finditer(normalized)
     ]
+    hourly_spans = [match.span() for match in _HOURLY_RANGE_RE.finditer(normalized)]
+    all_ranges_bound = all(
+        any(start <= range_start and range_end <= end for start, end in hourly_spans)
+        for range_start, range_end in [match.span() for match in _RANGE_PCT_RE.finditer(normalized)]
+    )
     for match in _PCT_RE.finditer(normalized):
         if any(start <= match.start() < end for start, end in range_spans):
             continue
@@ -190,7 +195,7 @@ def _extract(
         if value == 100 and not any(start <= match.start() < end for start, end in relative_spans):
             invalid_100 = True
         percents.add(value)
-    return times, percents, explicit_positive, ambiguous, invalid_100, ranges, hourly_ranges
+    return times, percents, explicit_positive, ambiguous, invalid_100, ranges, hourly_ranges, all_ranges_bound
 
 
 def validate(text: str, facts: Facts) -> ValidationResult:
@@ -223,7 +228,7 @@ def validate(text: str, facts: Facts) -> ValidationResult:
         if pattern.search(text):
             return ValidationResult(False, reason)
 
-    found_times, found_pcts, explicit_positive, ambiguous, invalid_100, found_ranges, found_hourly_ranges = _extract(
+    found_times, found_pcts, explicit_positive, ambiguous, invalid_100, found_ranges, found_hourly_ranges, all_ranges_bound = _extract(
         text, facts.require_day_prefix
     )
     if explicit_positive or ambiguous or invalid_100:
@@ -238,7 +243,7 @@ def validate(text: str, facts: Facts) -> ValidationResult:
         if any(low > high for low, high in found_ranges):
             return ValidationResult(False, "range")
     if facts.required_hourly_ranges is not None:
-        if found_hourly_ranges != facts.required_hourly_ranges:
+        if not all_ranges_bound or found_hourly_ranges != facts.required_hourly_ranges:
             return ValidationResult(False, "hourly_range")
         if any(low > high for _, (low, high) in found_hourly_ranges):
             return ValidationResult(False, "hourly_range")

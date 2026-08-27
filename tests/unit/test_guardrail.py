@@ -6,7 +6,7 @@ from sleeptech.guardrail import validator as v
 
 
 FACTS = v.Facts(times=[23.5], percents=[8])
-NOTE = "（あなたの平常時を100%とした推定の目安）"
+NOTE = "（睡眠モデルと主観評価による推定の目安）"
 OK_TEXT = f"今夜は23:30までに寝れば、明日はベスト比 -8% 以内の見込みです{NOTE}。"
 
 
@@ -270,3 +270,13 @@ def test_hourly_range_mapping_requires_complete_unique_exact_pairs(ranges):
 def test_legacy_display_phrases_are_rejected():
     assert not v.validate("低下見込み3〜13%。推定の目安です。平常時100%", v.Facts()).passed
     assert not v.validate("低下見込み3〜13%。推定の目安です。目標を満たせます", v.Facts()).passed
+    assert not v.validate("低下見込み3〜13%。推定の目安です。あなたの平常時を100%とした推定の目安です", v.Facts()).passed
+
+
+def test_unbound_extra_range_is_rejected_when_hourly_ranges_are_required():
+    facts = v.Facts(required_hourly_ranges=[(7, (3, 13)), (8, (4, 14))])
+    text = (
+        "7時台 低下見込み3〜13% 8時台 低下見込み4〜14% "
+        "参考 3〜13% 推定の目安です"
+    )
+    assert not v.validate(text, facts).passed

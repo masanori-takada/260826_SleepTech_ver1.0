@@ -220,7 +220,21 @@ class EchoLlm:
     """
 
     def complete(self, system: str, user: str) -> str:
+        return user + "\n推定の目安です。"
+
+
+class OldBaselineNoteLlm:
+    """旧基準注記を返すLLM。guardrailがrejectすることを確認する。"""
+
+    def complete(self, system: str, user: str) -> str:
         return user + "\n※あなたの平常時を100%とした推定の目安です"
+
+
+def test_old_baseline_note_is_rejected_in_production_llm_path():
+    push = FakePushClient()
+    memory = _memory()
+    result = morning.run_morning(DATE, _deps(memory=memory, llm=OldBaselineNoteLlm(), push=push))
+    assert result["used_fallback"] is True
 
 
 def test_llm_success_path_still_passes_after_percents_change():

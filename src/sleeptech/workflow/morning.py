@@ -132,7 +132,7 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
     log.log("recovery", caffeine=len(plan.caffeine_times_h))
 
     # 6. 文章化・検証・送信
-    # 必須は谷の低下率1つ。他の時間帯の値は許可リストに入れる（列挙しても捏造扱いしない）
+    # 朝の16時間帯それぞれについて、時刻と低下見込みrangeを必須出力にする。
     all_pcts = [endpoint for low, high in ranges for endpoint in (low, high)]
     # 谷（LLM に必須値として要求する低下率）は主要時間帯（起床+2h〜+10h）に限定する。
     # 全区間で探すと睡眠慣性の影響で起床直後の値が常に最大になってしまうため。

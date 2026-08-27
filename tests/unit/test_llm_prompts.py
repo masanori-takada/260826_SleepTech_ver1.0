@@ -24,7 +24,7 @@ from sleeptech.memory.schemas import (
     RecoveryPlan,
 )
 
-_NOTE = "（あなたの平常時を100%とした推定の目安）"
+_NOTE = "（睡眠モデルと主観評価による推定の目安）"
 
 # validator.py の禁止パターンをテスト側で複製したもの（非公開名は import しない）。
 # validator.py を変更した場合はここも合わせて更新すること。
@@ -104,6 +104,11 @@ def test_night_user_does_not_offer_forbidden_success_phrase():
     text = night_user(_advice("ok"), _baseline(), 0.0, 3, 13, "low", 2)
     assert "目標を満たせます" not in text
     assert "指定睡眠時間を確保できる時刻" in text
+
+
+def test_night_and_morning_prompt_lengths_match_required_output():
+    assert "夜" in NIGHT_SYSTEM and "200文字以内" in NIGHT_SYSTEM
+    assert "朝" in MORNING_SYSTEM and "1200文字以内" in MORNING_SYSTEM
 
 
 def test_night_flow_normal_bedtime_passes():
