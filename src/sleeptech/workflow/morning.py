@@ -108,7 +108,11 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
     history = deps.memory.get_vitals_desc(date, C.BASELINE_LOOKBACK_DAYS)
     sleeps = [s for s in (v.to_sleep_input() for v in history) if s is not None]
     override = deps.memory.get_config().get("override_wake_h", deps.settings.override_wake_h)
-    baseline = bl.compute(sleeps, override_wake_h=override)
+    baseline = bl.compute(
+        sleeps,
+        override_wake_h=override,
+        min_target_sleep_h=deps.settings.min_target_sleep_h,
+    )
     debt_h = tp.sleep_debt_h(sleeps, baseline)
     curve = tp.predict_curve(vital.to_sleep_input(), baseline, debt_h)
 

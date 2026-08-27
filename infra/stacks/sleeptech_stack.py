@@ -77,6 +77,7 @@ class SleepTechStack(Stack):
             "STC_SECRET_OPENAI": SECRET_NAMES["openai"],
             # 暫定値。API実機値はTask 17で確認する。
             "LLM_MODEL": "gpt-5.6-luna",
+            "STC_MIN_TARGET_SLEEP_H": "7.0",
             "PYTHONPATH": "/var/task/src",
         }
 

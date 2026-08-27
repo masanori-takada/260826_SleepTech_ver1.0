@@ -46,6 +46,12 @@ class Baseline:
     deep_min: float | None = None
     days_used: int = 0
     is_default: bool = False
+    target_sleep_h: float | None = None
+
+    @property
+    def effective_target_sleep_h(self) -> float:
+        """目標睡眠時間。旧データでは習慣睡眠時間へ後方互換する。"""
+        return self.target_sleep_h if self.target_sleep_h is not None else self.sleep_h
 
 
 @dataclass(frozen=True)

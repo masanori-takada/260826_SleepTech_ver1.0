@@ -19,11 +19,20 @@ class Settings:
     llm_model: str
     target_drop_pct: float
     override_wake_h: float | None
+    min_target_sleep_h: float = 7.0
 
 
 def _env_float_or_none(name: str) -> float | None:
     raw = os.getenv(name)
     return float(raw) if raw and raw.strip() else None
+
+
+def _env_float_in_range(name: str, default: float, low: float, high: float) -> float:
+    """環境変数の浮動小数点値を指定範囲内で読み込む。"""
+    value = float(os.getenv(name, str(default)))
+    if not low <= value <= high:
+        raise ValueError(f"{name} must be between {low} and {high}")
+    return value
 
 
 def load_settings() -> Settings:
@@ -39,4 +48,5 @@ def load_settings() -> Settings:
         llm_model=os.getenv("LLM_MODEL", "gpt-5.6-luna"),
         target_drop_pct=float(os.getenv("STC_TARGET_DROP_PCT", "10")),
         override_wake_h=_env_float_or_none("STC_OVERRIDE_WAKE_H"),
+        min_target_sleep_h=_env_float_in_range("STC_MIN_TARGET_SLEEP_H", 7.0, 7.0, 9.0),
     )

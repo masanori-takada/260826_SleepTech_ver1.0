@@ -53,7 +53,7 @@ def sleep_debt_h(recent: list[SleepInput], baseline: Baseline) -> float:
     """
     total = 0.0
     for i, s in enumerate(recent[: C.DEBT_LOOKBACK_DAYS]):
-        deficit = max(0.0, baseline.sleep_h - s.duration_h)
+        deficit = max(0.0, baseline.effective_target_sleep_h - s.duration_h)
         total += deficit * (C.DEBT_DECAY**i)
     return round(total, 3)
 
@@ -91,11 +91,11 @@ def _curve_points(sleep: SleepInput, baseline: Baseline, debt_h: float) -> list[
 def predict_curve(sleep: SleepInput, baseline: Baseline, debt_h: float) -> list[HourlyDrop]:
     """実際の睡眠と平常時を比較し、時間帯別の低下率を返す。
 
-    平常時カーブは「同じ起床時刻で baseline.sleep_h だけ寝た場合」。
+    平常時カーブは「同じ起床時刻で目標睡眠時間だけ寝た場合」。
     低下率は 0 未満にならないようクランプする（寝過ぎでボーナスは出さない）。
     """
     ideal = SleepInput(
-        bedtime_h=sleep.wake_h - baseline.sleep_h,
+        bedtime_h=sleep.wake_h - baseline.effective_target_sleep_h,
         wake_h=sleep.wake_h,
         rem_min=baseline.rem_min,
         deep_min=baseline.deep_min,
@@ -178,6 +178,7 @@ def recommend_bedtime(
     rem_min: float | None = None,
     deep_min: float | None = None,
     target_drop_pct: float = C.TARGET_DROP_PCT,
+    calibration_offset_pct: float = 0.0,
 ) -> BedtimeAdvice:
     """閾値を満たす最も遅い就寝時刻を線形スキャンで求める。
 
@@ -193,7 +194,12 @@ def recommend_bedtime(
     STC_TARGET_DROP_PCT で上書きしたい呼び出し側（夜フロー）がここに渡す。
     model/ 配下は純粋関数のみのため、ここでは環境変数を読まない。
     """
+    # 旧レコードや旧呼び出しで生成した target_sleep_h=None の Baseline は、
+    # 従来の探索上限を維持する。compute() が生成する新しい Baseline では
+    # 明示された目標睡眠時間も上限に含め、短い習慣睡眠を推奨しない。
     limit_h = baseline.wake_h - C.MIN_SLEEP_BEFORE_WAKE_H
+    if baseline.target_sleep_h is not None:
+        limit_h = min(limit_h, baseline.wake_h - baseline.effective_target_sleep_h)
 
     def _evaluate(t: float) -> tuple[list[HourlyDrop], float]:
         curve = predict_curve_from_bedtime(t, baseline, debt_h, rem_min, deep_min)
@@ -215,7 +221,7 @@ def recommend_bedtime(
         candidates.append((t, mean, curve))
 
     # 過小睡眠を勧めないため、平常時睡眠時間を確保できる時刻を上限とする
-    comfortable_h = baseline.wake_h - baseline.sleep_h
+    comfortable_h = baseline.wake_h - baseline.effective_target_sleep_h
     passing = [c for c in candidates if c[1] <= target_drop_pct]
     if passing:
         eligible = [c for c in passing if c[0] <= comfortable_h] or passing

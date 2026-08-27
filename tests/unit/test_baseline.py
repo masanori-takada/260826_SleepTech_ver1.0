@@ -9,6 +9,11 @@ def _night(bedtime_h: float, wake_h: float, rem: float = 90.0) -> SleepInput:
     return SleepInput(bedtime_h=bedtime_h, wake_h=wake_h, rem_min=rem, deep_min=60.0)
 
 
+def _sleep(hours: float, wake_h: float) -> SleepInput:
+    """起床時刻を固定し、睡眠時間だけを指定した入力を作る。"""
+    return SleepInput(bedtime_h=wake_h - hours, wake_h=wake_h)
+
+
 def test_uses_defaults_when_history_is_empty():
     """履歴ゼロなら既定値を使い、is_default が立つ。"""
     got = baseline.compute([])
@@ -73,3 +78,12 @@ def test_rem_baseline_is_none_when_all_missing():
     got = baseline.compute(nights)
     assert got.rem_min is None
     assert got.deep_min is None
+
+
+def test_short_habit_is_not_used_as_target():
+    """短い習慣睡眠は目標睡眠に採用せず、最低7時間を使う。"""
+    recent = [_sleep(hours=5.4, wake_h=32.68) for _ in range(13)]
+    got = baseline.compute(recent, min_target_sleep_h=7.0)
+    assert got.sleep_h == 5.4
+    assert got.target_sleep_h == 7.0
+    assert got.effective_target_sleep_h == 7.0

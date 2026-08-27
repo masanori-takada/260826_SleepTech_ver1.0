@@ -2,13 +2,31 @@
 
 import math
 
-from sleeptech.memory.schemas import Baseline
+from sleeptech.memory.schemas import Baseline, SleepInput
 from sleeptech.model import constants as C
 from sleeptech.model import two_process as tp
 
 BASE = Baseline(
     wake_h=31.0, sleep_h=7.5, rem_min=90.0, deep_min=60.0, days_used=14, is_default=False
 )
+
+
+def test_recommendation_never_sacrifices_seven_hour_target():
+    """短い習慣睡眠でも7時間目標を犠牲にする推奨を返さない。"""
+    base = Baseline(
+        wake_h=32.68, sleep_h=5.4, rem_min=32, deep_min=80,
+        days_used=13, is_default=False, target_sleep_h=7.0,
+    )
+    got = tp.recommend_bedtime(22.5, base, debt_h=0.561)
+    assert got.bedtime_h <= 25.68 + 0.084
+    assert got.bedtime_h < 27.25
+
+
+def test_sleep_debt_uses_target_not_short_habit():
+    """睡眠負債は短い習慣睡眠ではなく目標睡眠との差で計算する。"""
+    base = Baseline(wake_h=31, sleep_h=5.5, target_sleep_h=7.0)
+    sleep = SleepInput(bedtime_h=25.5, wake_h=31)
+    assert tp.sleep_debt_h([sleep], base) == 1.5
 
 
 def test_returns_ok_status_in_normal_case():

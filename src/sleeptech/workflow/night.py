@@ -48,7 +48,11 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
     vitals = deps.memory.get_vitals_desc(date, C.BASELINE_LOOKBACK_DAYS)
     sleeps = [s for s in (v.to_sleep_input() for v in vitals) if s is not None]
     override = deps.memory.get_config().get("override_wake_h", deps.settings.override_wake_h)
-    baseline = bl.compute(sleeps, override_wake_h=override)
+    baseline = bl.compute(
+        sleeps,
+        override_wake_h=override,
+        min_target_sleep_h=deps.settings.min_target_sleep_h,
+    )
     debt_h = tp.sleep_debt_h(sleeps, baseline)
     log.log("baseline", days=baseline.days_used, default=baseline.is_default, debt=debt_h)
 

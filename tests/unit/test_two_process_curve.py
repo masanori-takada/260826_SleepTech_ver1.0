@@ -99,6 +99,13 @@ def test_sleep_debt_is_zero_when_well_rested():
     assert tp.sleep_debt_h([_sleep(8.0)] * 5, BASE) == 0.0
 
 
+def test_ideal_curve_uses_target_sleep():
+    """理想カーブは短い習慣睡眠ではなく7時間目標を基準にする。"""
+    base = Baseline(wake_h=31, sleep_h=5.5, target_sleep_h=7.0)
+    curve = tp.predict_curve(_sleep(5.5), base, debt_h=0)
+    assert any(point.focus_pct > 0 for point in curve)
+
+
 def test_debt_increases_drop():
     """睡眠負債があると同じ睡眠時間でも低下率が大きくなる。"""
     no_debt = _at(tp.predict_curve(_sleep(6.0), BASE, 0.0), 14)
