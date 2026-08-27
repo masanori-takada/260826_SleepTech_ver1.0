@@ -131,6 +131,13 @@ class MemoryClient:
         raw = self._backend.get(PK_FEEDBACK, date)
         return Feedback.from_dict(raw) if raw else None
 
+    def get_feedback_desc(self, limit: int) -> list[Feedback]:
+        """フィードバック履歴を新しい順で指定件数だけ返す。"""
+        return [
+            Feedback.from_dict(raw)
+            for raw in self._backend.query_desc(PK_FEEDBACK, limit)
+        ]
+
     def is_notified(self, date: str, slot: str) -> bool:
         item = self._backend.get(_pk_idem(slot), date)
         return bool(item and item.get("status", "SENT") == "SENT")

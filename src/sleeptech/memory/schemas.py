@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import date as date_cls
+from datetime import timedelta
 
 
 @dataclass(frozen=True)
@@ -160,6 +162,13 @@ class Prediction:
     status: str = "ok"
     curve: list = field(default_factory=list)
     recovery: dict = field(default_factory=dict)
+    raw_mean_drop_pct: float | None = None
+    calibrated_mean_drop_pct: float | None = None
+    range_low_pct: int | None = None
+    range_high_pct: int | None = None
+    confidence: str | None = None
+    feedback_count: int = 0
+    calibration_offset_pct: float = 0.0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -203,6 +212,20 @@ class Feedback:
     date: str
     score: int
     answered_at: str | None = None
+    evaluated_date: str | None = None
+    prediction_date: str | None = None
+
+    @property
+    def effective_evaluated_date(self) -> str:
+        """評価日を返す。旧形式ではdateを評価日として扱う。"""
+        return self.evaluated_date or self.date
+
+    @property
+    def effective_prediction_date(self) -> str:
+        """対応予測日を返す。旧形式では評価日の前日として扱う。"""
+        if self.prediction_date:
+            return self.prediction_date
+        return (date_cls.fromisoformat(self.date) - timedelta(days=1)).isoformat()
 
     def to_dict(self) -> dict:
         return asdict(self)

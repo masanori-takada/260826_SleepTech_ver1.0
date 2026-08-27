@@ -179,6 +179,13 @@ def test_feedback_is_overwritten_by_later_answer():
     assert c.get_feedback("2026-08-26").score == 5
 
 
+def test_feedback_desc_is_newest_first_and_limited():
+    c = _client()
+    for day in ("2026-08-25", "2026-08-26", "2026-08-27"):
+        c.save_feedback(Feedback(date=day, score=3))
+    assert [f.date for f in c.get_feedback_desc(2)] == ["2026-08-27", "2026-08-26"]
+
+
 def test_config_defaults_to_empty_dict():
     assert _client().get_config() == {}
 

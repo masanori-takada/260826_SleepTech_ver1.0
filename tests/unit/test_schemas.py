@@ -59,3 +59,15 @@ def test_prediction_round_trip():
 def test_feedback_round_trip():
     f = Feedback(date="2026-08-26", score=4, answered_at="2026-08-26T23:10:00+09:00")
     assert Feedback.from_dict(f.to_dict()) == f
+
+
+def test_legacy_feedback_derives_dates():
+    feedback = Feedback.from_dict({"date": "2026-08-27", "score": 1})
+    assert feedback.effective_evaluated_date == "2026-08-27"
+    assert feedback.effective_prediction_date == "2026-08-26"
+
+
+def test_prediction_reads_old_record_without_new_fields():
+    pred = Prediction.from_dict({"date": "2026-08-26", "slot": "MORNING", "mean_drop_pct": 8})
+    assert pred.raw_mean_drop_pct is None
+    assert pred.calibrated_mean_drop_pct is None
