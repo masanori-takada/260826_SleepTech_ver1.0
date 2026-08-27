@@ -196,6 +196,13 @@ def test_save_feedback_once_is_atomic_for_the_same_feedback_key():
     assert c.get_feedback("2026-08-27").score == 1
 
 
+def test_claim_feedback_event_once_is_atomic_for_unmatched_events():
+    c = _client()
+
+    assert c.claim_feedback_event_once("event-1") is True
+    assert c.claim_feedback_event_once("event-1") is False
+
+
 def test_config_defaults_to_empty_dict():
     assert _client().get_config() == {}
 

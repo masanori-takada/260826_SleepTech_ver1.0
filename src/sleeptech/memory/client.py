@@ -61,6 +61,15 @@ class InMemoryBackend:
             self._items[event_key] = {"event_id": event_id, "status": "PROCESSED"}
             return True
 
+    def put_feedback_event_once(self, event_id: str) -> bool:
+        """未紐付け評価イベントを一度だけclaimする。"""
+        with self._lock:
+            event_key = (PK_FEEDBACK_EVENT, event_id)
+            if event_key in self._items:
+                return False
+            self._items[event_key] = {"event_id": event_id, "status": "PROCESSED"}
+            return True
+
     def claim(self, pk: str, sk: str, value: dict, now: float, lease_seconds: int) -> bool:
         current = self._items.get((pk, sk))
         if current and current.get("status") == "SENT":
@@ -157,6 +166,17 @@ class MemoryClient:
             PK_FEEDBACK_EVENT,
             fb.source_event_id,
             {"event_id": fb.source_event_id, "status": "PROCESSED"},
+        )
+
+    def claim_feedback_event_once(self, event_id: str) -> bool:
+        """未紐付けイベントのclaimを原子的に行う。"""
+        atomic_claim = getattr(self._backend, "put_feedback_event_once", None)
+        if callable(atomic_claim):
+            return atomic_claim(event_id)
+        return self._backend.put_conditional(
+            PK_FEEDBACK_EVENT,
+            event_id,
+            {"event_id": event_id, "status": "PROCESSED"},
         )
 
     def is_feedback_event_processed(self, event_id: str) -> bool:

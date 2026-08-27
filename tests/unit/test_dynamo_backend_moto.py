@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import boto3
 import pytest
+from botocore.stub import Stubber
 from moto import mock_aws
 
 from sleeptech.memory.client import MemoryClient, NotificationClaimBusy
@@ -131,3 +132,63 @@ def test_merge_json_creates_new_item_conditionally(backend):
 
     assert merged == {"date": "2026-08-02", "value": 1}
     assert backend.get("VITAL", "2026-08-02")["value"] == 1
+
+
+def test_resource_meta_client_transact_write_accepts_native_python_items(backend):
+    """resource.meta.clientの実オブジェクトがnative Python型をmarshalすることを検証する。"""
+    client = backend._table.meta.client
+    expected = {
+        "TransactItems": [
+            {"Put": {"TableName": TABLE_NAME,
+                      "Item": {"pk": "x", "sk": "y", "value": 1},
+                      "ConditionExpression": "attribute_not_exists(pk)"}}
+        ]
+    }
+    stubber = Stubber(client)
+    stubber.add_response("transact_write_items", {}, expected)
+
+    with stubber:
+        client.transact_write_items(**expected)
+
+
+def test_transient_transaction_cancellation_is_propagated(backend):
+    client = backend._table.meta.client
+    feedback = {"date": "2026-08-28", "score": 1}
+    expected_transact = {
+        "TransactItems": [
+            {"Put": {"TableName": TABLE_NAME,
+                      "Item": {"pk": "FEEDBACK", "sk": "2026-08-28",
+                                "json": '{"date": "2026-08-28", "score": 1}'},
+                      "ConditionExpression": "attribute_not_exists(pk)"}},
+            {"Put": {"TableName": TABLE_NAME,
+                      "Item": {"pk": "IDEM#FEEDBACK", "sk": "event-transient",
+                                "status": "PROCESSED",
+                                "json": '{"event_id": "event-transient", "status": "PROCESSED"}'},
+                      "ConditionExpression": "attribute_not_exists(pk)"}},
+        ]
+    }
+    stubber = Stubber(client)
+    stubber.add_client_error(
+        "transact_write_items", "TransactionCanceledException",
+        expected_params=expected_transact,
+    )
+    stubber.add_response("get_item", {}, {
+        "TableName": TABLE_NAME,
+        "Key": {"pk": "FEEDBACK", "sk": "2026-08-28"},
+        "ConsistentRead": True,
+    })
+    stubber.add_response("get_item", {}, {
+        "TableName": TABLE_NAME,
+        "Key": {"pk": "IDEM#FEEDBACK", "sk": "event-transient"},
+        "ConsistentRead": True,
+    })
+
+    with stubber, pytest.raises(client.exceptions.TransactionCanceledException):
+        backend.put_feedback_once(feedback, "event-transient")
+
+
+def test_feedback_transaction_condition_collision_returns_false(backend):
+    feedback = {"date": "2026-08-28", "score": 1}
+
+    assert backend.put_feedback_once(feedback, "event-1") is True
+    assert backend.put_feedback_once(feedback, "event-1") is False

@@ -106,6 +106,11 @@ class SleepTechStack(Stack):
             for secret_key in secret_keys:
                 secret_refs[secret_key].grant_read(function)
 
+        webhook_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["dynamodb:TransactWriteItems"],
+            resources=[table.table_arn],
+        ))
+
         webhook_url = webhook_fn.add_function_url(auth_type=lambda_.FunctionUrlAuthType.NONE)
         # Minor対応: LINE Developers コンソールに貼るWebhook URLをコンソールで
         # 探し回らずに済むよう、デプロイ出力に出す。

@@ -854,3 +854,24 @@ def test_feedback_without_valid_event_id_is_ignored_safely(monkeypatch):
     assert response["statusCode"] == 200
     assert memory.get_feedback("2026-08-27") is None
     assert replies == []
+
+
+def test_unmatched_feedback_event_is_claimed_and_replied_only_once(monkeypatch):
+    _patch_webhook_dependencies(monkeypatch)
+    memory = MemoryClient(InMemoryBackend())
+    replies = []
+
+    class FakeReplyClient:
+        def reply(self, reply_token, message):
+            replies.append((reply_token, message["text"]))
+
+    monkeypatch.setattr(wh.hd, "_memory", lambda settings: memory)
+    monkeypatch.setattr(wh.hd, "_push_from_secret", lambda secret_data: FakeReplyClient())
+    event = _feedback_webhook_event_with_id("評価:3", "r2", "event-unmatched")
+    payload = json.loads(event["body"])
+    payload["events"].append(dict(payload["events"][0]))
+    duplicate_batch = _signed_webhook_event(payload["events"])
+
+    assert wh.handler(duplicate_batch)["statusCode"] == 200
+    assert replies == [("r2", "評価を対応する朝の予測に紐付けられませんでした。次の夜の評価から記録します。")]
+    assert memory.get_feedback("2026-08-27") is None

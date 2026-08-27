@@ -86,3 +86,45 @@
 
 - DynamoDB実環境でのトランザクション競合・再送検証は未実施。
 - LINE実機での`webhookEventId`欠損/再送挙動確認は未実施。
+
+## Fix Round 2/5: Transaction/IAMと未紐付けclaim
+
+### RED
+
+次の失敗テストを先に追加し、修正前に確認した。
+
+- Webhook role policyに`dynamodb:TransactWriteItems`が存在しない。
+- 未紐付けイベントclaim APIがなく、同一batchで未紐付け返信を重複送信する。
+- `TransactionCanceledException`を一時障害でもFalseへ変換してしまい、再送可能な例外を隠す。
+
+### GREEN
+
+- `resource.meta.client`の実オブジェクトを`Stubber`で呼び出し、native Python型のItemが自動marshalされることを検証した。TypeSerializerによる二重marshalは行っていない。
+- `DynamoBackend.put_feedback_once()`は取消後にFeedbackキーとイベントmarkerを強整合readし、実在時だけFalse、どちらも無い一時取消は`TransactionCanceledException`を再送する。
+- Webhook roleへ対象テーブル限定の`dynamodb:TransactWriteItems`を明示付与。
+- 未紐付け評価もイベントmarkerを原子的にclaimしてからreplyし、同一batch・再送はduplicate無返信とした。markerは`IDEM#FEEDBACK`で補正履歴に含めない。
+
+### Fix Round 2 検証
+
+- 対象/CDK関連テスト：`196 passed`（追加後の条件競合テストを含む）
+- `cdk synth --strict`：成功
+- 全pytest：`525 passed`
+- `python -m compileall -q src infra`：`infra/cdk.out`生成asset内のpyc競合で失敗。`cdk.out`を除外した`python -m compileall -q -x 'cdk\\.out' src infra`と`python -m compileall -q src infra/stacks`は成功
+- `git diff --check`：成功
+
+### Fix Round 2 変更ファイル
+
+- `infra/stacks/sleeptech_stack.py`
+- `src/sleeptech/memory/client.py`
+- `src/sleeptech/memory/dynamo_backend.py`
+- `src/handlers/webhook_handler.py`
+- `tests/unit/test_infra_synth.py`
+- `tests/unit/test_memory_client.py`
+- `tests/unit/test_dynamo_backend_moto.py`
+- `tests/unit/test_handlers.py`
+
+### Fix Round 2 残課題
+
+- 実AWSでのIAM拒否・TransactionCanceledExceptionの実障害再現は未実施。
+- LINE実機での未紐付けイベント再送とreply失敗後の無返信確認は未実施。
+- `infra/cdk.out`はCDK synthが生成するgitignore対象で、削除は実行ポリシーにより行わず、compileallから除外して検証した。

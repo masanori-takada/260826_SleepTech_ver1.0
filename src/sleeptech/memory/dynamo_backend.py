@@ -95,12 +95,27 @@ class DynamoBackend:
                              "ConditionExpression": "attribute_not_exists(pk)"}},
                 ]
             )
-        except (
-            self._table.meta.client.exceptions.TransactionCanceledException,
-            self._table.meta.client.exceptions.ConditionalCheckFailedException,
-        ):
-            return False
+        except self._table.meta.client.exceptions.TransactionCanceledException:
+            if self._exists_strong("FEEDBACK", feedback_value["date"]):
+                return False
+            if self._exists_strong("IDEM#FEEDBACK", event_id):
+                return False
+            raise
         return True
+
+    def put_feedback_event_once(self, event_id: str) -> bool:
+        """未紐付け評価イベントを条件付きで一度だけclaimする。"""
+        return self.put_conditional(
+            "IDEM#FEEDBACK", event_id,
+            {"event_id": event_id, "status": "PROCESSED"},
+        )
+
+    def _exists_strong(self, pk: str, sk: str) -> bool:
+        """トランザクション取消後に対象キーを強整合性で確認する。"""
+        response = self._table.get_item(
+            Key={"pk": pk, "sk": sk}, ConsistentRead=True
+        )
+        return bool(response.get("Item"))
 
     def put_json_if_match(
         self, pk: str, sk: str, value: dict, expected_json: str | None

@@ -325,6 +325,10 @@ def handler(event, context=None) -> dict:
                 handled.append("feedback")
             else:
                 log.log("feedback_unmatched", score=score)
+                if not memory.claim_feedback_event_once(event_id):
+                    log.log("feedback_duplicate")
+                    handled.append("feedback_duplicate")
+                    continue
                 if authorized.reply_token:
                     if reply_client is None:
                         reply_client = hd._push_from_secret(line_secret_data)

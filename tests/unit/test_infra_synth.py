@@ -313,3 +313,9 @@ def test_synth_asset_root_contains_src_and_all_handler_files():
         "OpenAI_API_Key.txt",
     ):
         assert not (asset_root / development_item).exists()
+
+
+def test_webhook_role_explicitly_allows_dynamodb_transactions(template):
+    policy_text = _secret_policy_text(template, "src.handlers.webhook_handler.handler")
+
+    assert "dynamodb:TransactWriteItems" in policy_text
