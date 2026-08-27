@@ -56,16 +56,10 @@ aws secretsmanager create-secret \
   --secret-string '{"client_id":"xxxxx","client_secret":"xxxxx","refresh_token":"xxxxx"}'
 ```
 
-既存の `night-ramen/google-oauth` から値をコピーする場合:
-
-```bash
-# 既存シークレットの値を取得（画面に表示されるので取り扱い注意）
-aws secretsmanager get-secret-value \
-  --secret-id night-ramen/google-oauth \
-  --query SecretString --output text
-
-# 取得した JSON をそのまま sleeptech/google-oauth の --secret-string に渡して create-secret する
-```
+既存の `night-ramen/google-oauth` を引き継ぐ場合も、秘密値を取得・表示・ログしない。
+認証済みの運用担当者が、Secrets Manager の権限管理された画面または既存の安全な
+シークレット移行手順でコピーする。シェル履歴、CloudWatch Logs、チャット、チケットへ
+秘密値を貼り付けない。このタスクでは Secret の読み取り・作成・更新を実行しない。
 
 ---
 
@@ -260,3 +254,124 @@ aws scheduler update-schedule \
 `MorningSchedule`（`cron(0 8 * * ? *)`）も同様に行う。再開する場合は `--state ENABLED` で同じコマンドを実行する。
 
 Webhook（おはよう前倒し）を止めたい場合は Lambda Function URL 自体を無効化するか、LINE Developers コンソールで「Webhookの利用」をOFFにする。
+
+---
+
+## 9. 評価補正の移行（既存2件を削除せず補完）
+
+この節は、デプロイ後に承認済みの運用担当者が実行する手順である。この作業では
+秘密値を取得・表示・ログしない。対象キー以外の項目や DynamoDB のキーは変更せず、
+削除、全件置換、テーブル再作成を行わない。
+
+### 9-1. 更新前の照合
+
+1. `FEEDBACK` を強整合 Query し、更新前件数を記録する。評価履歴件数には冪等
+   marker の `IDEM#FEEDBACK` を含めない。
+2. 次の2件が、スコア・`answered_at`・旧 JSON と完全一致することを確認する。
+
+   | `date` | `score` | `answered_at` | 対応する `prediction_date` |
+   |---|---:|---|---|
+   | `2026-08-26` | 3 | `2026-08-26T23:32:24+09:00` | `2026-08-25` |
+   | `2026-08-27` | 1 | `2026-08-27T23:47:52+09:00` | `2026-08-26` |
+
+3. 強整合 BatchGet で `PREDICT#MORNING/2026-08-25` と
+   `PREDICT#MORNING/2026-08-26` の存在を確認する。対応する朝予測がない項目は
+   補正対象にせず、削除もしない。
+
+片方でも件数、旧 JSON、スコア、回答時刻、対応予測の存在が一致しなければ停止し、
+再 Query して差異を調査する。確認できていない値を推測して更新しない。
+
+### 9-2. 条件付き更新
+
+各項目について、確認した旧 JSON を `:old`、次の完全な JSON を `:new` として、
+キーを変えず `UpdateExpression: SET #json = :new`、
+`ConditionExpression: #json = :old` の条件付き更新を1件ずつ行う。
+
+```json
+{"date":"2026-08-26","score":3,"answered_at":"2026-08-26T23:32:24+09:00","evaluated_date":"2026-08-26","prediction_date":"2026-08-25"}
+{"date":"2026-08-27","score":1,"answered_at":"2026-08-27T23:47:52+09:00","evaluated_date":"2026-08-27","prediction_date":"2026-08-26"}
+```
+
+条件付き更新が1件でも失敗したら、その場で追加更新を止め、再 Query して現在値を
+調査する。更新後に強整合 Query し、`FEEDBACK` 件数が更新前と同じであること、
+削除件数が0であること、2件の `evaluated_date` と `prediction_date` が上表どおりで
+あることを記録する。
+
+---
+
+## 10. LINE公式アカウントの応答設定
+
+LINE Developers と LINE Official Account Manager の既存ログイン状態を使い、秘密値を
+画面やログへ転記しない。
+
+1. LINE Developers の対象チャネルで **Messaging API設定** を開き、Webhook URL が
+   `WebhookFunctionUrl` と一致していることを確認する。
+2. LINE Developers の Messaging API設定で **Webhookの利用** を ON のまま維持する。
+3. LINE Official Account Manager の **設定 → 応答設定 → 応答メッセージ → 編集** を
+   開き、**応答メッセージをオフ**にして保存する。
+4. 同画面の Chat の応答方法も自動文を返さない設定にし、汎用の自動応答を無効にする。
+5. 画面を再読み込みして、応答メッセージがオフ、Webhookの利用がオンのままであることを
+   再確認する。
+
+評価ボタンを1回だけ押して、SleepTech の
+「評価Nを記録しました。次回以降の予測補正に反映します。」が1回だけ返り、
+汎用自動応答が0件であることを確認する。保存できない評価については、対応する朝予測
+がない旨の明確な返信だけが返り、評価が保存されないことを確認する。
+
+---
+
+## 11. デプロイ前の検証
+
+リポジトリのルートで、デプロイや実送信をせずに次を実行する。
+
+```powershell
+python -m pytest -q
+python -m compileall -q src infra
+git diff --check
+cd infra
+cdk synth --strict
+cdk diff SleepTechStack --fail false
+cd ..
+```
+
+テストでは、バックフィルを除く全ランタイム Lambda に
+`STC_MIN_TARGET_SLEEP_H=7.0` があり、Webhook に DynamoDB の
+`dynamodb:TransactWriteItems` があり、CDK output が `../cdk.out` のままで、アセットに
+ハンドラが含まれ秘密ファイル・開発用ディレクトリ・コンパイル済み Python が含まれない
+ことを確認する。
+
+`cdk diff` は既存リソースの削除・置換が0であることを確認する。差分にそれ以外の変更が
+あれば停止してレビューする。ここでは AWS デプロイ、DynamoDB 更新、LINE画面操作、
+実メッセージ送信を実施しない。
+
+---
+
+## 12. デプロイ後の検証項目（運用担当者が実施）
+
+- CloudFormation の `SleepTechStack` が `UPDATE_COMPLETE` である。
+- Scheduler が夜22:30と朝8:00の2本とも `ENABLED` である。
+- Night は3:15のような遅い時刻を推奨せず、起床目安、最低7時間、予測幅、信頼度を表示する。
+- Night/Morning とも単一の百分率や旧「平常時100%」を表示せず、範囲と信頼度を表示する。
+  Morning は各時間帯を16時間の範囲として表示する。
+- 表示には「睡眠モデルと主観評価による推定幅で、実測の仕事能力ではない」旨と、
+  中途覚醒・HRV・心拍数を現行の百分率計算に使っていない旨がある。
+- DynamoDB の Prediction に `raw_mean_drop_pct`、`calibrated_mean_drop_pct`、
+  `range_low_pct`、`range_high_pct`、`confidence`、`feedback_count`、
+  `calibration_offset_pct` が保存される。`IDEM#FEEDBACK` は評価履歴件数に含めない。
+- CloudWatch Logs に `feedback_saved` と `feedback_reply_sent` が出て、補正 offset と
+  利用件数が夜・朝のログに出る。返信失敗時は `feedback_reply_failed` となり、保存済み
+  評価を失わない。
+- 評価時の `FEEDBACK.evaluated_date` は質問日、`prediction_date` はその前日で、
+  `PREDICT#NIGHT` には紐付かない。評価確認返信は1回だけで、汎用自動応答は0件である。
+
+---
+
+## 13. ロールバック時のデータ保持
+
+問題があればまず Night/Morning Scheduler を無効化し、必要に応じて Lambda/CDK を前版へ
+戻す。旧コードは新しいフィールドを無視して旧レコードを読めるため、DynamoDB の
+`FEEDBACK` や `PREDICT` レコードを削除・巻き戻し・再作成しない。既存の評価件数、
+`evaluated_date`、`prediction_date`、補正監査値はそのまま保持する。
+
+前版へ戻した後も、Scheduler の状態、Webhook の応答設定、DynamoDB 件数を確認し、
+再デプロイ時には再び `cdk synth --strict` と削除・置換のない `cdk diff` を通す。

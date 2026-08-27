@@ -200,6 +200,26 @@ def test_lambdas_receive_model_and_pythonpath(template):
     )
 
 
+def test_all_runtime_functions_receive_min_target_sleep_hours(template):
+    """バックフィル以外の実行時Lambdaへ最低目標睡眠時間を渡す。"""
+    functions = template.find_resources("AWS::Lambda::Function")
+    runtime_functions = [
+        resource
+        for resource in functions.values()
+        if resource["Properties"]["Handler"]
+        != "src.handlers.backfill_handler.handler"
+    ]
+
+    assert runtime_functions
+    assert all(
+        resource["Properties"]["Environment"]["Variables"][
+            "STC_MIN_TARGET_SLEEP_H"
+        ]
+        == "7.0"
+        for resource in runtime_functions
+    )
+
+
 def test_webhook_has_a_public_function_url(template):
     template.resource_count_is("AWS::Lambda::Url", 1)
     template.has_resource_properties(
