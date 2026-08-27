@@ -161,3 +161,38 @@ CDKの実stagingを検査するテストを追加した。修正前は`ASSET_EXC
 ### Fix Round 3 残課題
 
 - 実AWSへのデプロイ後asset内容確認は未実施。
+
+## Fix Round 4/5: CDK出力先をinfraツリー外へ固定
+
+### RED
+
+- `cdk.json`に出力設定がなく、出力先を検証するテストが`KeyError: output`で失敗した。
+- 修正前の設定では、`infra`で`synth --strict`した後にリポジトリルートから通常の`python -m compileall -q src infra`を実行する実順序を安全に成立させられなかった。
+
+### GREEN
+
+- `infra/cdk.json`の`output`を`../cdk.out`へ固定した。
+- 実コマンド`cd infra; cdk synth --strict`で`infra/cdk.out`が生成されず、リポジトリルートの`cdk.out`へmanifest/assetが生成されることを確認した。
+- synth直後にリポジトリルートから通常の`python -m compileall -q src infra`を実行し、終了コード0を確認した。
+- 新出力先のasset内に`__pycache__`、`*.pyc`、`*.pyo`、`*.pyd`が0件であることを確認した。
+- `cdk.json`の相対output設定をテストで検査し、Windowsでは`cdk.cmd`を含む実在コマンドを選択して実コマンド順序を再現した。
+
+### Fix Round 4 検証
+
+- RED対象テスト：`2 failed`
+- GREEN対象テスト：`2 passed`
+- 全pytest：`529 passed`
+- `cdk synth --strict`：成功
+- synth直後の`python -m compileall -q src infra`：成功
+- 新出力先assetのcompiled artifact：`0`件、`__pycache__`：`0`ディレクトリ
+- `git diff --check`：成功
+
+### Fix Round 4 変更ファイル
+
+- `infra/cdk.json`
+- `tests/unit/test_infra_synth.py`
+- 本レポート
+
+### Fix Round 4 残課題
+
+- 実AWSへの`cdk deploy`/`cdk diff`実行、およびデプロイ後assetの確認は未実施。synthとasset検査では出力先変更後の成果物生成を確認済み。

@@ -1,5 +1,6 @@
 {
   "app": "python app.py",
+  "output": "../cdk.out",
   "context": {
     "@aws-cdk/core:newStyleStackSynthesis": true
   }

@@ -2,6 +2,9 @@
 
 import json
 import importlib
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -341,3 +344,48 @@ def test_webhook_role_explicitly_allows_dynamodb_transactions(template):
     policy_text = _secret_policy_text(template, "src.handlers.webhook_handler.handler")
 
     assert "dynamodb:TransactWriteItems" in policy_text
+
+
+def test_cdk_output_is_outside_infra_tree():
+    config = json.loads((Path(REPO_ROOT) / "infra" / "cdk.json").read_text(encoding="utf-8"))
+
+    assert config["output"] == "../cdk.out"
+
+
+def test_synth_then_root_compileall_does_not_scan_cdk_output():
+    repo_root = Path(REPO_ROOT)
+    infra_root = repo_root / "infra"
+    infra_output = infra_root / "cdk.out"
+    repo_output = repo_root / "cdk.out"
+
+    try:
+        cdk_command = shutil.which("cdk") or shutil.which("cdk.cmd")
+        assert cdk_command, "cdkコマンドがPATHにありません"
+        synth = subprocess.run(
+            [cdk_command, "synth", "--strict"],
+            cwd=infra_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert synth.returncode == 0, synth.stderr
+        assert not infra_output.exists()
+        assert repo_output.is_dir()
+
+        compileall = subprocess.run(
+            [sys.executable, "-m", "compileall", "-q", "src", "infra"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert compileall.returncode == 0, compileall.stderr
+        assert not list(repo_output.rglob("__pycache__"))
+        assert not list(repo_output.rglob("*.pyc"))
+        assert not list(repo_output.rglob("*.pyo"))
+        assert not list(repo_output.rglob("*.pyd"))
+    finally:
+        if repo_output.exists():
+            shutil.rmtree(repo_output)
+        if infra_output.exists():
+            shutil.rmtree(infra_output)
