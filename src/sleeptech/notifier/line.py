@@ -12,6 +12,7 @@ from typing import Callable
 from urllib.error import HTTPError
 
 PUSH_URL = "https://api.line.me/v2/bot/message/push"
+REPLY_URL = "https://api.line.me/v2/bot/message/reply"
 FEEDBACK_PREFIX = "評価:"
 FEEDBACK_QUESTION = "今日の調子はどうだった？"
 FEEDBACK_LABELS: list[tuple[str, int]] = [
@@ -91,6 +92,17 @@ class LinePushClient:
             if exc.code == 409 and _has_accepted_retry_request_id(exc):
                 return
             raise
+
+    def reply(self, reply_token: str, message: dict) -> None:
+        """指定されたWebhookイベントへ1件の確認メッセージを返信する。"""
+        headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Content-Type": "application/json",
+        }
+        self._post(REPLY_URL, headers, {
+            "replyToken": reply_token,
+            "messages": [message],
+        })
 
 
 class FakePushClient:

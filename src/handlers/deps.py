@@ -149,7 +149,17 @@ def _push(settings):
     from sleeptech.notifier.line import LinePushClient
 
     s = _secret(settings.secret_line, settings.region)
-    return LinePushClient(s.get("channel_access_token", ""), s.get("user_id", ""))
+    return _push_from_secret(s)
+
+
+def _push_from_secret(secret_data: dict):
+    """取得済みLINE secretから送信クライアントを組み立てる。"""
+    from sleeptech.notifier.line import LinePushClient
+
+    return LinePushClient(
+        secret_data.get("channel_access_token", ""),
+        secret_data.get("user_id", ""),
+    )
 
 
 def _health_source(settings, deadline=None):

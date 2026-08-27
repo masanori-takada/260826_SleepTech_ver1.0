@@ -86,6 +86,21 @@ def test_push_client_uses_retry_key_on_every_request():
     assert captured["headers"]["X-Line-Retry-Key"] == key
 
 
+def test_reply_uses_reply_endpoint_and_token():
+    calls = []
+    client = line.LinePushClient(
+        "token", "U1", http_post=lambda url, headers, body: calls.append((url, headers, body))
+    )
+
+    client.reply("reply-token", {"type": "text", "text": "記録しました"})
+
+    assert calls[0][0] == line.REPLY_URL
+    assert calls[0][2] == {
+        "replyToken": "reply-token",
+        "messages": [{"type": "text", "text": "記録しました"}],
+    }
+
+
 def test_default_http_post_accepts_line_duplicate_retry_key(monkeypatch):
     """LINE が重複 retry key を受理済みと返す409は送信成功として扱う。"""
     error = HTTPError(

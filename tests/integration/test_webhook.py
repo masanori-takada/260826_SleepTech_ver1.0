@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from sleeptech.memory.client import InMemoryBackend, MemoryClient
-from sleeptech.memory.schemas import Prediction
+from sleeptech.memory.schemas import Message, Prediction
 from src.handlers import deps as hd
 from src.handlers import webhook_handler as wh
 
@@ -95,6 +95,24 @@ def test_feedback_binds_to_the_latest_unanswered_night_prediction():
     m.save_prediction(Prediction(date="2026-08-25", slot="NIGHT"))
     m.save_prediction(Prediction(date="2026-08-26", slot="NIGHT"))
     assert wh.resolve_feedback_date(m, today="2026-08-26") == "2026-08-26"
+
+
+def test_feedback_targets_previous_origin_morning_prediction():
+    m = MemoryClient(InMemoryBackend())
+    m.save_message(Message(date="2026-08-27", slot="NIGHT", delivered=True))
+    m.save_prediction(Prediction(date="2026-08-26", slot="MORNING", mean_drop_pct=8))
+
+    got = wh.resolve_feedback_target(m, today="2026-08-27")
+
+    assert got.evaluated_date == "2026-08-27"
+    assert got.prediction_date == "2026-08-26"
+
+
+def test_feedback_never_targets_same_day_night_prediction():
+    m = MemoryClient(InMemoryBackend())
+    m.save_prediction(Prediction(date="2026-08-27", slot="NIGHT"))
+
+    assert wh.resolve_feedback_target(m, today="2026-08-27") is None
 
 
 def test_feedback_falls_back_to_previous_day():
