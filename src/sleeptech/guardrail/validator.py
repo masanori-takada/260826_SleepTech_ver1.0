@@ -24,6 +24,17 @@ _ATTACK = re.compile(
 _TIME_RE = re.compile(r"(?<!\d)(?:(?P<day>翌)\s*)?(\d{1,2}):(\d{2})(?!\d)")
 _PCT_RE = re.compile(r"(?P<sign>[+-]?)(?P<value>\d{1,3})%")
 _RANGE_PCT_RE = re.compile(r"(?P<low>\d{1,3})\s*[〜～]\s*(?P<high>\d{1,3})%")
+_HOURLY_RANGE_RE = re.compile(
+    r"(?P<hour>\d{1,2})時台[^\d%]{0,20}"
+    r"(?P<low>\d{1,3})\s*[〜～]\s*(?P<high>\d{1,3})%"
+)
+_CONFIDENCE_RE = re.compile(r"信頼度\s*[:：]\s*(?P<label>低|中|高)")
+_COUNT_RE = re.compile(r"評価データ\s*(?P<count>\d+)件")
+_FORBIDDEN_DISPLAY = re.compile(r"平常時100%|目標を満たせます")
+REQUIRED_NOTES = (
+    "実測の仕事能力ではありません",
+    "中途覚醒・HRV・心拍数は現行の%計算には使っていません",
+)
 _RELATIVE_NOTE = re.compile(r"(?:本人|あなた)の平常時を\s*100%")
 _FULLWIDTH = str.maketrans("０１２３４５６７８９：％－＋−", "0123456789:%-+-")
 
@@ -43,6 +54,11 @@ class Facts:
     allowed_times: list[float] | None = None
     allowed_percents: list[int] | None = None
     require_day_prefix: bool = False
+    confidence: str | None = None
+    feedback_count: int | None = None
+    required_notes: tuple[str, ...] = ()
+    required_ranges: list[tuple[int, int]] | None = None
+    required_hourly_ranges: list[tuple[int, tuple[int, int]]] | None = None
 
 
 @dataclass(frozen=True)
@@ -133,7 +149,7 @@ def _time_key(t_h: float) -> str:
 
 def _extract(
     text: str, require_day_prefix: bool
-) -> tuple[set[tuple[str, bool]], set[int], bool, bool, bool]:
+) -> tuple[set[tuple[str, bool]], set[int], bool, bool, bool, list[tuple[int, int]], list[tuple[int, tuple[int, int]]]]:
     """本文から時刻・%・符号違反・曖昧表現・不正100%を抽出する。"""
     normalized = normalize(text)
     times: set[tuple[str, bool]] = set()
@@ -150,10 +166,16 @@ def _extract(
     invalid_100 = False
     relative_spans = [match.span() for match in _RELATIVE_NOTE.finditer(normalized)]
     range_spans = []
+    ranges: list[tuple[int, int]] = []
     for match in _RANGE_PCT_RE.finditer(normalized):
         low, high = int(match.group("low")), int(match.group("high"))
         percents.update((low, high))
+        ranges.append((low, high))
         range_spans.append(match.span())
+    hourly_ranges = [
+        (int(match.group("hour")), (int(match.group("low")), int(match.group("high"))))
+        for match in _HOURLY_RANGE_RE.finditer(normalized)
+    ]
     for match in _PCT_RE.finditer(normalized):
         if any(start <= match.start() < end for start, end in range_spans):
             continue
@@ -168,13 +190,29 @@ def _extract(
         if value == 100 and not any(start <= match.start() < end for start, end in relative_spans):
             invalid_100 = True
         percents.add(value)
-    return times, percents, explicit_positive, ambiguous, invalid_100
+    return times, percents, explicit_positive, ambiguous, invalid_100, ranges, hourly_ranges
 
 
 def validate(text: str, facts: Facts) -> ValidationResult:
     """語句検査と確定値の過不足照合を行う。"""
     if not text or not text.strip():
         return ValidationResult(False, "empty")
+    if _FORBIDDEN_DISPLAY.search(text):
+        return ValidationResult(False, "forbidden_display")
+    for note in facts.required_notes:
+        if text.count(note) != 1:
+            return ValidationResult(False, "required_note")
+    confidence_matches = _CONFIDENCE_RE.findall(text)
+    if facts.confidence is not None:
+        expected_confidence = {"low": "低", "medium": "中", "high": "高"}.get(
+            facts.confidence, facts.confidence
+        )
+        if confidence_matches != [expected_confidence]:
+            return ValidationResult(False, "confidence")
+    count_matches = _COUNT_RE.findall(text)
+    if facts.feedback_count is not None:
+        if count_matches != [str(facts.feedback_count)]:
+            return ValidationResult(False, "feedback_count")
 
     for pattern, reason in (
         (_MEDICAL, "medical"),
@@ -185,7 +223,7 @@ def validate(text: str, facts: Facts) -> ValidationResult:
         if pattern.search(text):
             return ValidationResult(False, reason)
 
-    found_times, found_pcts, explicit_positive, ambiguous, invalid_100 = _extract(
+    found_times, found_pcts, explicit_positive, ambiguous, invalid_100, found_ranges, found_hourly_ranges = _extract(
         text, facts.require_day_prefix
     )
     if explicit_positive or ambiguous or invalid_100:
@@ -194,6 +232,16 @@ def validate(text: str, facts: Facts) -> ValidationResult:
         return ValidationResult(False, "note")
     if found_pcts and "推定の目安" not in normalize(text) and not _RELATIVE_NOTE.search(normalize(text)):
         return ValidationResult(False, "definition")
+    if facts.required_ranges is not None:
+        if found_ranges != facts.required_ranges:
+            return ValidationResult(False, "range")
+        if any(low > high for low, high in found_ranges):
+            return ValidationResult(False, "range")
+    if facts.required_hourly_ranges is not None:
+        if found_hourly_ranges != facts.required_hourly_ranges:
+            return ValidationResult(False, "hourly_range")
+        if any(low > high for _, (low, high) in found_hourly_ranges):
+            return ValidationResult(False, "hourly_range")
 
     wanted_times = {
         (_time_key(time), facts.require_day_prefix and time >= 24.0) for time in facts.times
@@ -212,6 +260,14 @@ def validate(text: str, facts: Facts) -> ValidationResult:
         if facts.allowed_percents is not None
         else wanted_pcts
     )
+    if facts.required_ranges is not None and facts.allowed_percents is None:
+        allowed_pcts.update(endpoint for pair in facts.required_ranges for endpoint in pair)
+    if facts.required_hourly_ranges is not None and facts.allowed_percents is None:
+        allowed_pcts.update(
+            endpoint
+            for _, pair in facts.required_hourly_ranges
+            for endpoint in pair
+        )
     if _RELATIVE_NOTE.search(normalize(text)):
         allowed_pcts.add(100)
 

@@ -81,6 +81,10 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
         percents=[range_low, range_high],
         allowed_percents=[range_low, range_high],
         require_day_prefix=True,
+        confidence={"low": "低", "medium": "中", "high": "高"}[cal.confidence],
+        feedback_count=cal.feedback_count,
+        required_notes=gv.REQUIRED_NOTES,
+        required_ranges=[(range_low, range_high)],
     )
     body, used_fallback, regen_count = _compose(
         deps, advice, baseline, debt_h, range_low, range_high,

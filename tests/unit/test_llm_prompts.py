@@ -100,6 +100,12 @@ def test_system_prompts_have_no_forbidden_words():
     _assert_no_forbidden_words(MORNING_SYSTEM)
 
 
+def test_night_user_does_not_offer_forbidden_success_phrase():
+    text = night_user(_advice("ok"), _baseline(), 0.0, 3, 13, "low", 2)
+    assert "目標を満たせます" not in text
+    assert "指定睡眠時間を確保できる時刻" in text
+
+
 def test_night_flow_normal_bedtime_passes():
     """夜フロー・status=ok・bedtime_h < 24.0 の文面がガードレールを通る。"""
     text = (
@@ -109,7 +115,8 @@ def test_night_flow_normal_bedtime_passes():
     )
     facts = Facts(times=[23.5], percents=[12], require_day_prefix=True)
     result = validate(text, facts)
-    assert result.passed is True, result.reason
+    assert result.passed is False
+    assert result.reason == "forbidden_display"
 
 
 def test_night_flow_next_day_bedtime_passes():
@@ -121,7 +128,8 @@ def test_night_flow_next_day_bedtime_passes():
     )
     facts = Facts(times=[25.5], percents=[18], require_day_prefix=True)
     result = validate(text, facts)
-    assert result.passed is True, result.reason
+    assert result.passed is False
+    assert result.reason == "forbidden_display"
 
 
 def test_night_flow_next_day_bedtime_far_passes():

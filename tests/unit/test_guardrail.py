@@ -211,3 +211,62 @@ def test_range_endpoints_are_required_and_extra_percent_is_rejected():
     facts = v.Facts(times=[25.5], percents=[3, 13], allowed_percents=[3, 13])
     assert v.validate("翌 1:30、低下見込み3〜13%。推定の目安です", facts).passed
     assert not v.validate("翌 1:30、低下見込み3〜18%。推定の目安です", facts).passed
+
+
+_NOTES = (
+    "実測の仕事能力ではありません",
+    "中途覚醒・HRV・心拍数は現行の%計算には使っていません",
+)
+
+
+def test_confidence_count_and_required_notes_are_required():
+    facts = v.Facts(
+        times=[25.5], percents=[3, 13], allowed_percents=[3, 13],
+        confidence="low", feedback_count=2, required_notes=_NOTES,
+    )
+    text = "翌 1:30、低下見込み3〜13%。信頼度：低（評価データ2件）。推定の目安です。" + "。".join(_NOTES)
+    assert v.validate(text, facts).passed
+
+
+@pytest.mark.parametrize("bad", [
+    "信頼度：中（評価データ2件）",
+    "信頼度：低（評価データ3件）",
+    "信頼度：低",
+    "実測の仕事能力です",
+    "中途覚醒・HRV・心拍数は現行の%計算に使っています",
+])
+def test_confidence_count_and_required_notes_changes_are_rejected(bad):
+    facts = v.Facts(
+        times=[25.5], percents=[3, 13], allowed_percents=[3, 13],
+        confidence="low", feedback_count=2, required_notes=_NOTES,
+    )
+    text = "翌 1:30、低下見込み3〜13%。信頼度：低（評価データ2件）。推定の目安です。" + "。".join(_NOTES)
+    if bad.startswith("信頼度"):
+        text = text.replace("信頼度：低（評価データ2件）", bad)
+    else:
+        text = text.replace(_NOTES[0] if "仕事" in bad else _NOTES[1], bad)
+    assert not v.validate(text, facts).passed
+
+
+def test_night_range_order_is_required():
+    facts = v.Facts(times=[25.5], required_ranges=[(3, 13)])
+    assert v.validate("翌 1:30、低下見込み3〜13%。推定の目安です", facts).passed
+    assert not v.validate("翌 1:30、低下見込み13〜3%。推定の目安です", facts).passed
+
+
+@pytest.mark.parametrize("ranges", [
+    [(7, (3, 13))],
+    [(7, (13, 3)), (8, (4, 14))],
+    [(7, (3, 13)), (8, (3, 13))],
+    [(7, (3, 13)), (8, (4, 14)), (8, (4, 14))],
+])
+def test_hourly_range_mapping_requires_complete_unique_exact_pairs(ranges):
+    facts = v.Facts(required_hourly_ranges=[(7, (3, 13)), (8, (4, 14))])
+    text = " ".join(f"{hour}時台 低下見込み{low}〜{high}%" for hour, (low, high) in ranges)
+    text += " 推定の目安です"
+    assert not v.validate(text, facts).passed
+
+
+def test_legacy_display_phrases_are_rejected():
+    assert not v.validate("低下見込み3〜13%。推定の目安です。平常時100%", v.Facts()).passed
+    assert not v.validate("低下見込み3〜13%。推定の目安です。目標を満たせます", v.Facts()).passed

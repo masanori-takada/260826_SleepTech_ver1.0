@@ -152,6 +152,10 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
         percents=list(ranges[worst_index]),
         allowed_times=allowed_times,
         allowed_percents=all_pcts,
+        confidence={"low": "低", "medium": "中", "high": "高"}[cal.confidence],
+        feedback_count=cal.feedback_count,
+        required_notes=gv.REQUIRED_NOTES,
+        required_hourly_ranges=[(d.hour, ranges[i]) for i, d in enumerate(curve)],
     )
     body, used_fallback, regen_count = _compose(
         deps, curve, ranges, plan, vital, cal.confidence, cal.feedback_count, facts, log,
@@ -173,7 +177,17 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
                 date=date,
                 slot=SLOT,
                 mean_drop_pct=calibrated_mean,
-                curve=[asdict(d) for d in curve],
+                curve=[
+                    {
+                        "hour": d.hour,
+                        "raw_focus_pct": d.focus_pct,
+                        "focus_pct": calibrated_focus[i],
+                        "mood_pct": d.mood_pct,
+                        "range_low_pct": ranges[i][0],
+                        "range_high_pct": ranges[i][1],
+                    }
+                    for i, d in enumerate(curve)
+                ],
                 recovery=asdict(plan),
                 raw_mean_drop_pct=raw_mean,
                 calibrated_mean_drop_pct=calibrated_mean,

@@ -122,6 +122,24 @@ def test_saves_prediction_with_curve():
     assert pred.recovery["caffeine_cutoff_h"] is not None
 
 
+def test_saved_curve_reproduces_each_displayed_calibrated_range(monkeypatch):
+    captured = {}
+    original = morning.prompts.morning_user
+
+    def spy(curve, plan, vital, ranges=None, confidence=None, feedback_count=None):
+        captured["ranges"] = ranges
+        return original(curve, plan, vital, ranges, confidence, feedback_count)
+
+    monkeypatch.setattr(morning.prompts, "morning_user", spy)
+    memory = _memory()
+    morning.run_morning(DATE, _deps(memory=memory, llm=NullClient()))
+    pred = memory.get_prediction(DATE, "MORNING")
+    assert len(pred.curve) == len(captured["ranges"]) == 16
+    for row, (low, high) in zip(pred.curve, captured["ranges"]):
+        assert set(("hour", "raw_focus_pct", "focus_pct", "mood_pct", "range_low_pct", "range_high_pct")) <= row.keys()
+        assert (row["range_low_pct"], row["range_high_pct"]) == (low, high)
+
+
 def test_morning_applies_offset_only_to_focus_curve():
     memory = _memory()
     memory.save_prediction(Prediction(date="2026-08-25", slot="MORNING", mean_drop_pct=0))
@@ -233,12 +251,7 @@ class ParaphrasingLlm:
     def complete(self, system: str, user: str) -> str:
         # 必須値（カフェイン推奨・最終摂取・朝光・避光の各時刻）はそのまま含めつつ、
         # 谷の時間帯だけ「〜時から〜時にかけて」という自然な言い換えにする。
-        return (
-            f"{self.hour_a}時から{self.hour_b}時にかけて集中力が11〜21%ほど"
-            "落ちやすい見込みです。カフェインは8:00に、13:30までに済ませてください。"
-            "朝の光は7:30までに、20:30以降は避光を。"
-            "あなたの平常時を100%とした推定の目安です。"
-        )
+        return user + "\n推定の目安です。"
 
 
 def test_curve_hour_paraphrase_is_not_rejected_as_fabrication():

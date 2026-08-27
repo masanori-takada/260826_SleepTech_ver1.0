@@ -21,6 +21,8 @@ _COMMON_RULES = (
     "- 与えられた数値は省略せず本文に含めること。\n"
     "- % は睡眠モデルと主観評価による推定幅で、実測の仕事能力ではない旨を添えること。\n"
     "- 範囲の両端と信頼度を変更・省略しないこと。\n"
+    "- 「実測の仕事能力ではありません」「中途覚醒・HRV・心拍数は現行の%計算には使っていません」"
+    "の両注記を省略・改変しないこと。\n"
     "- 時刻は与えられた表記のまま書くこと。「翌」が付いている時刻から「翌」を"
     "落としてはならない。\n"
     "- 医学的な診断・治療の断定をしないこと。\n"
@@ -45,9 +47,9 @@ def night_user(advice: BedtimeAdvice, baseline: Baseline, debt_h: float,
                range_low=None, range_high=None, confidence=None, feedback_count=None) -> str:
     """夜フローのユーザープロンプト。確定値のみを列挙する。"""
     status_note = {
-        "ok": "この時刻までに寝れば目標を満たせる",
-        "unreachable": "何時に寝ても目標には届かない。早めの就寝を促す",
-        "too_late": "目標達成が難しい時間帯。今すぐ寝るよう促す",
+        "ok": "指定睡眠時間を確保できる時刻までに就寝する",
+        "unreachable": "指定睡眠時間を確保できる時刻に届かないため早めに就寝する",
+        "too_late": "指定睡眠時間の確保が難しい時間帯のため今すぐ就寝する",
     }[advice.status]
 
     lines = [f"推奨就寝時刻: {fmt_hm(advice.bedtime_h)}"]
@@ -55,7 +57,8 @@ def night_user(advice: BedtimeAdvice, baseline: Baseline, debt_h: float,
     # 平常な晩ほど不自然な文章を強いることになり、ガードレールにも落ちやすくなる）。
     if range_low is not None and range_high is not None:
         lines.append(f"明日の主要時間帯の低下見込み: {range_low}〜{range_high}%")
-        lines.append(f"信頼度: {confidence}（評価データ{feedback_count}件）")
+        label = {"low": "低", "medium": "中", "high": "高"}.get(confidence, confidence)
+        lines.append(f"信頼度: {label}（評価データ{feedback_count}件）")
     elif advice.mean_drop_pct != 0:
         lines.append(f"明日の主要時間帯の平均低下率: -{advice.mean_drop_pct}%")
     else:
@@ -64,6 +67,11 @@ def night_user(advice: BedtimeAdvice, baseline: Baseline, debt_h: float,
     lines.append(f"睡眠負債: {debt_h:.1f}時間")
     if baseline.is_default:
         lines.append("注意: 履歴が少なく精度が低いことを一言添えること")
+    if range_low is not None and range_high is not None:
+        lines.extend([
+            "実測の仕事能力ではありません",
+            "中途覚醒・HRV・心拍数は現行の%計算には使っていません",
+        ])
     return "\n".join(lines)
 
 
@@ -88,7 +96,12 @@ def morning_user(curve: list[HourlyDrop], recovery_plan: RecoveryPlan, vital: Da
             low, high = ranges[i]
             lines.append(f"  {d.hour}時台: 集中力 {low}〜{high}%")
     if ranges is not None:
-        lines.append(f"信頼度: {confidence}（評価データ{feedback_count}件）")
+        label = {"low": "低", "medium": "中", "high": "高"}.get(confidence, confidence)
+        lines.append(f"信頼度: {label}（評価データ{feedback_count}件）")
+        lines.extend([
+            "実測の仕事能力ではありません",
+            "中途覚醒・HRV・心拍数は現行の%計算には使っていません",
+        ])
 
     if recovery_plan.caffeine_times_h:
         times = "、".join(fmt_hm_plain(t) for t in recovery_plan.caffeine_times_h)
