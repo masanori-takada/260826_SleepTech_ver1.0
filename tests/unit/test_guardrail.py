@@ -287,8 +287,25 @@ def test_unbound_extra_range_is_rejected_when_hourly_ranges_are_required():
     "あなたの平常時を 100 % とした推定の目安です",
 ])
 def test_legacy_baseline_note_normalization_is_rejected(old_note):
-    text = f"低下見込み3〜13%。推定の目安です。{old_note}"
-    assert not v.validate(text, v.Facts()).passed
+    ranges = [(hour, (3, 13)) for hour in range(7, 23)]
+    facts = v.Facts(
+        required_hourly_ranges=ranges,
+        required_confidence="low",
+        required_feedback_count=2,
+        required_notes=(
+            "実測の仕事能力ではありません",
+            "中途覚醒・HRV・心拍数は現行の%計算には使っていません",
+        ),
+    )
+    rows = " ".join(f"{hour}時台 低下見込み3〜13%" for hour, _ in ranges)
+    text = (
+        f"{rows} 信頼度：低（評価データ2件）。推定の目安です。"
+        "実測の仕事能力ではありません。"
+        f"中途覚醒・HRV・心拍数は現行の%計算には使っていません。{old_note}"
+    )
+    result = v.validate(text, facts)
+    assert result.passed is False
+    assert result.reason == "forbidden_display"
 
 
 @pytest.mark.parametrize("extra_range", [

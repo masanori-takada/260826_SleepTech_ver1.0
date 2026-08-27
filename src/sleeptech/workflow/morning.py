@@ -152,8 +152,8 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
         percents=list(ranges[worst_index]),
         allowed_times=allowed_times,
         allowed_percents=all_pcts,
-        confidence={"low": "低", "medium": "中", "high": "高"}[cal.confidence],
-        feedback_count=cal.feedback_count,
+        required_confidence={"low": "低", "medium": "中", "high": "高"}[cal.confidence],
+        required_feedback_count=cal.feedback_count,
         required_notes=gv.REQUIRED_NOTES,
         required_hourly_ranges=[(d.hour, ranges[i]) for i, d in enumerate(curve)],
     )

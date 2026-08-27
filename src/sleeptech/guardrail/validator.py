@@ -34,7 +34,7 @@ _HOURLY_RANGE_RE = re.compile(
 )
 _CONFIDENCE_RE = re.compile(r"信頼度\s*[:：]\s*(?P<label>低|中|高)")
 _COUNT_RE = re.compile(r"評価データ\s*(?P<count>\d+)件")
-_FORBIDDEN_DISPLAY = re.compile(r"平常時(?:を)?\s*100%|目標を満たせます")
+_FORBIDDEN_DISPLAY = re.compile(r"平常時\s*(?:を\s*)?100\s*%|目標を満たせます")
 REQUIRED_NOTES = (
     "実測の仕事能力ではありません",
     "中途覚醒・HRV・心拍数は現行の%計算には使っていません",
@@ -63,6 +63,8 @@ class Facts:
     required_notes: tuple[str, ...] = ()
     required_ranges: list[tuple[int, int]] | None = None
     required_hourly_ranges: list[tuple[int, tuple[int, int]]] | None = None
+    required_confidence: str | None = None
+    required_feedback_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -213,15 +215,25 @@ def validate(text: str, facts: Facts) -> ValidationResult:
         if text.count(note) != 1:
             return ValidationResult(False, "required_note")
     confidence_matches = _CONFIDENCE_RE.findall(text)
-    if facts.confidence is not None:
+    expected_confidence_value = (
+        facts.required_confidence
+        if facts.required_confidence is not None
+        else facts.confidence
+    )
+    if expected_confidence_value is not None:
         expected_confidence = {"low": "低", "medium": "中", "high": "高"}.get(
-            facts.confidence, facts.confidence
+            expected_confidence_value, expected_confidence_value
         )
         if confidence_matches != [expected_confidence]:
             return ValidationResult(False, "confidence")
     count_matches = _COUNT_RE.findall(text)
-    if facts.feedback_count is not None:
-        if count_matches != [str(facts.feedback_count)]:
+    expected_feedback_count = (
+        facts.required_feedback_count
+        if facts.required_feedback_count is not None
+        else facts.feedback_count
+    )
+    if expected_feedback_count is not None:
+        if count_matches != [str(expected_feedback_count)]:
             return ValidationResult(False, "feedback_count")
 
     for pattern, reason in (
