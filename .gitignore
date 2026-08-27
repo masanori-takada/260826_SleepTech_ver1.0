@@ -18,6 +18,7 @@ infra/layers/*/python/
 # エージェント用ツールの足場（プロジェクト成果物ではない）
 .agents/
 AGENTS.md
+.worktrees/
 
 # ローカルの認証情報（Gitへコミットしない）
 LINE_Developersの３つの値.txt
