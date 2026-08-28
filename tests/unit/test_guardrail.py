@@ -491,3 +491,25 @@ def test_protected_note_rejects_positive_redefinition_on_another_line(extra):
         extra,
     ])
     assert not v.validate(text, facts).passed
+
+
+@pytest.mark.parametrize("normal", [
+    "この数値は推定の目安を示します",
+    "仕事能力の実測値ではなく、睡眠不足による低下見込みを示します",
+])
+def test_protected_note_allows_normal_estimation_explanation(normal):
+    """推定値の説明は、保護注記を反転しない限り許可する。"""
+    facts = v.Facts(
+        percents=[3, 13],
+        allowed_percents=[3, 13],
+        required_ranges=[(3, 13)],
+        required_notes=("実測の仕事能力ではありません",),
+        protected_lines=("低下見込み3〜13%", "実測の仕事能力ではありません"),
+    )
+    text = "\n".join([
+        "低下見込み3〜13%",
+        "実測の仕事能力ではありません",
+        "推定の目安です",
+        normal,
+    ])
+    assert v.validate(text, facts).passed

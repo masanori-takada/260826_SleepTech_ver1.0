@@ -44,7 +44,7 @@ _INVERTED_RANGE = re.compile(r"低下見込み[^。\n]*%\s*(?:ではありませ
 _INVERTED_NOTE = re.compile(r"[「『]\s*実測の仕事能力ではありません\s*[」』]\s*は\s*誤り")
 _PROTECTED_REDEFINITION = re.compile(
     r"(?:実際(?:は|の)|本当(?:は|の)).*(?:実測|目標|起床)|"
-    r"(?:実測(?:値|の仕事能力)|注記|低下見込み|信頼度|目標(?:睡眠時間)?|"
+    r"(?:実測の仕事能力|注記|低下見込み|信頼度|目標(?:睡眠時間)?|"
     r"起床目安|目標時刻|今から確保).*(?:嘘|誤り|間違い|ではなく|ではない|とは限らない)|"
     r"%(?:は|が).*(?:嘘|誤り|間違い)"
 )
@@ -58,9 +58,8 @@ _GLOBAL_PROTECTED_NEGATION = re.compile(
     r"(?:上記|上の説明|これら|この説明|上述)[^。\n]*(?:嘘|誤り|間違い|事実ではない|事実でない|事実ではありません)"
 )
 _POSITIVE_PROTECTED_REDEFINITION = re.compile(
-    r"(?:実測(?:値|の仕事能力)?|この数値|数値|仕事能力)"
-    r"[^。\n]*(?:表(?:し|す)|示(?:し|す)|そのもの)"
-    r"(?:です|だ|である)?"
+    r"実測の仕事能力を(?:表す|表します|示す|示します)"
+    r"|(?:この数値|数値)は仕事能力(?:そのもの)?(?:です|だ|である)"
 )
 _FULLWIDTH = str.maketrans("０１２３４５６７８９：％－＋−", "0123456789:%-+-")
 
@@ -244,10 +243,15 @@ def validate(text: str, facts: Facts) -> ValidationResult:
             return re.sub(r"\s+", "", value.translate(_FULLWIDTH)).rstrip("。．")
 
         def label_of(value: str) -> str:
-            for label in ("低下見込み", "信頼度", "実測の仕事能力ではありません",
+            canonical = canonical_line(value)
+            # 保護行のラベルは行頭の固定形式だけを認識する。自由文中の
+            # 「低下見込み」まで保護行扱いにすると、正常な説明文を拒否する。
+            if re.match(r"^(?:\d+時台)?低下見込み", canonical):
+                return "低下見込み"
+            for label in ("信頼度", "実測の仕事能力ではありません",
                           "起床目安", "目標睡眠時間", "目標時刻は過ぎています",
                           "今から確保できる見込み"):
-                if label in value:
+                if canonical.startswith(label):
                     return label
             return value
 
