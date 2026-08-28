@@ -2,6 +2,7 @@
 
 import json
 import importlib
+import re
 import shutil
 import subprocess
 import sys
@@ -350,6 +351,7 @@ def test_deploy_migration_uses_safe_cli_and_powershell_json_patterns():
     """移行手順が秘密取得・全置換を避け、Windows PowerShellで安全に実行できる。"""
     deploy_doc = (Path(REPO_ROOT) / "docs" / "deploy.md").read_text(encoding="utf-8")
     migration = deploy_doc.split("## 9. 評価補正の移行", 1)[1].split("## 10.", 1)[0]
+    line_section = deploy_doc.split("## 10. LINE公式アカウントの応答設定", 1)[1].split("## 11.", 1)[0]
 
     forbidden_commands = (
         "get" + "-secret-value",
@@ -363,14 +365,17 @@ def test_deploy_migration_uses_safe_cli_and_powershell_json_patterns():
     assert "-like \"$prefix*\"" in deploy_doc
     assert "物理名の解決対象が0件または複数件" in deploy_doc
     assert "$NightFn" in deploy_doc and "$MorningFn" in deploy_doc
-    assert "Auto-reply messages" in deploy_doc
-    assert "Response settings" in deploy_doc
-    assert "LINE Official Account Manager の **設定 → 応答設定 → 応答メッセージ → 編集**" not in deploy_doc
-    assert "ChatがONの場合" in deploy_doc
-    assert "自動返信を無効化" in deploy_doc
-    assert "汎用返信しない" in deploy_doc
-    assert "SleepTech" in deploy_doc
-    assert "汎用自動応答が" in deploy_doc and "0件" in deploy_doc
+    assert "Auto-reply messages" in line_section
+    assert "Response settings" in line_section
+    assert "LINE Official Account Manager の **設定 → 応答設定 → 応答メッセージ → 編集**" not in line_section
+    assert "ChatがONの場合" in line_section
+    assert "自動返信を無効化" in line_section
+    assert "汎用返信しない" in line_section
+    assert re.search(
+        r"SleepTech\s+の[\s\S]{0,240}1回だけ[\s\S]{0,240}"
+        r"汎用自動応答が\s*\*{0,2}0件\*{0,2}",
+        line_section,
+    )
     assert "BackfillFn" in deploy_doc
     assert "Set-Content -Encoding UTF8" not in migration
     assert "UTF8Encoding]::new($false)" in migration

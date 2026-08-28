@@ -116,6 +116,31 @@
 - 追加契約テストアサーション: 8項目
 - AWSデプロイ、DynamoDB本番更新、LINE管理画面操作、実機確認、Sol最終レビューは未実施。
 
+## Fix Round 4/5 対応
+
+### 修正内容
+
+- LINE契約テストのLINE設定／実機確認範囲を、`## 10`から`## 11`までに切り出した。
+- SleepTechの確認返信1回と汎用自動応答0件が同じ節内で結び付くことを、範囲付きregexで検証する
+  ようにした。装飾や句読点の差には過剰依存しない。
+
+### RED/GREEN・検証
+
+- 文書の「SleepTech返信 1回だけ」を一時的に「2回だけ」へmutationし、契約テストがREDに
+  なることを確認した。
+- 文書を復元し、対象契約テストはGREEN（`1 passed`）。
+- docs検査: LINE設定／実機確認節内のregex結び付きと旧導線不在を確認。
+- 全pytest: `532 passed in 104.13s`
+- compileall: `python -m compileall -q src infra` — 成功
+- strict synth: `cd infra; cdk synth --strict` — 成功
+- `git diff --check` — 成功
+
+### 件数・残課題
+
+- 変更ファイル: 3（`docs/deploy.md`、`tests/unit/test_infra_synth.py`、本報告書）
+- 追加検証: LINE節regex 1件、mutation RED 1件
+- AWSデプロイ、DynamoDB本番更新、LINE管理画面操作、実機確認、Sol最終レビューは未実施。
+
 ## Fix Round 3/5 対応
 
 ### 修正内容
