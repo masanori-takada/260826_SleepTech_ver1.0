@@ -57,6 +57,11 @@ _PROTECTED_CONCEPT = re.compile(
 _GLOBAL_PROTECTED_NEGATION = re.compile(
     r"(?:上記|上の説明|これら|この説明|上述)[^。\n]*(?:嘘|誤り|間違い|事実ではない|事実でない|事実ではありません)"
 )
+_POSITIVE_PROTECTED_REDEFINITION = re.compile(
+    r"(?:実測(?:値|の仕事能力)?|この数値|数値|仕事能力)"
+    r"[^。\n]*(?:表(?:し|す)|示(?:し|す)|そのもの)"
+    r"(?:です|だ|である)?"
+)
 _FULLWIDTH = str.maketrans("０１２３４５６７８９：％－＋−", "0123456789:%-+-")
 
 
@@ -265,6 +270,11 @@ def validate(text: str, facts: Facts) -> ValidationResult:
             # 保護概念を含む行は、保護行の完全一致以外を一切許可しない。
             # これにより「実測値です」「目標は5時間」などの別行再定義も防ぐ。
             if canonical_line(line) not in allowed_lines and _PROTECTED_CONCEPT.search(line):
+                return ValidationResult(False, "protected_line")
+            # 注記「実測の仕事能力ではありません」を残したまま、別行で
+            # 実測値・仕事能力だと肯定する意味反転も拒否する。ただし正規注記
+            # 自体は allowed_lines として既に通過している。
+            if canonical_line(line) not in allowed_lines and _POSITIVE_PROTECTED_REDEFINITION.search(line):
                 return ValidationResult(False, "protected_line")
         if _GLOBAL_PROTECTED_NEGATION.search(normalized_text):
             return ValidationResult(False, "semantic_inversion")

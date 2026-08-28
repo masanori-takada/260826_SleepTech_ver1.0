@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """CDK アプリのエントリポイント。"""
 
-import os
-
 import aws_cdk as cdk
 
 from stacks.sleeptech_stack import SleepTechStack

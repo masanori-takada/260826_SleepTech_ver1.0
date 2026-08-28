@@ -469,3 +469,25 @@ def test_protected_mode_allows_normal_recovery_prose():
         "目標に向けて無理なく休みましょう", "推定の目安です",
     ])
     assert v.validate(text, facts).passed
+
+
+@pytest.mark.parametrize("extra", [
+    "実測の仕事能力を表します",
+    "この数値は仕事能力そのものです",
+])
+def test_protected_note_rejects_positive_redefinition_on_another_line(extra):
+    """正規注記を残していても、別行の肯定断定で意味を反転できない。"""
+    facts = v.Facts(
+        percents=[3, 13],
+        allowed_percents=[3, 13],
+        required_ranges=[(3, 13)],
+        required_notes=("実測の仕事能力ではありません",),
+        protected_lines=("低下見込み3〜13%", "実測の仕事能力ではありません"),
+    )
+    text = "\n".join([
+        "低下見込み3〜13%",
+        "実測の仕事能力ではありません",
+        "推定の目安です",
+        extra,
+    ])
+    assert not v.validate(text, facts).passed
