@@ -76,6 +76,16 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
     # LLMは本文に文字どおり「0%」を含めないとガードレールを通せず、
     # 「ほぼ低下しません」のような自然な表現が numbers 判定で弾かれてしまう
     # （平常な晩ほどテンプレート文に落ちる、という逆転が起きていた）。
+    required_phrases = [
+        f"起床目安: {prompts.fmt_hm_plain(baseline.wake_h)}",
+        f"目標睡眠時間: {baseline.effective_target_sleep_h:.1f}時間",
+    ]
+    if advice.status == "too_late" and advice.available_sleep_h is not None:
+        hours, minutes = divmod(round(advice.available_sleep_h * 60), 60)
+        required_phrases.extend([
+            "目標時刻は過ぎています。今すぐ寝る",
+            f"今から確保できる見込み: {hours}時間{minutes:02d}分",
+        ])
     facts = gv.Facts(
         times=[advice.bedtime_h],
         percents=[range_low, range_high],
@@ -85,6 +95,7 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
         required_feedback_count=cal.feedback_count,
         required_notes=gv.REQUIRED_NOTES,
         required_ranges=[(range_low, range_high)],
+        required_phrases=tuple(required_phrases),
     )
     body, used_fallback, regen_count = _compose(
         deps, advice, baseline, debt_h, range_low, range_high,

@@ -139,6 +139,32 @@ def test_saves_prediction_with_curve():
     assert pred.recovery["caffeine_cutoff_h"] is not None
 
 
+def test_recovery_uses_target_sleep_not_short_habit(monkeypatch):
+    """習慣5.4時間・目標7時間なら今夜の就寝目安を96分早める。"""
+    captured = {}
+    original_plan = morning.rc.plan
+
+    def spy_plan(wake_h, bedtime_h):
+        captured["bedtime_h"] = bedtime_h
+        return original_plan(wake_h, bedtime_h)
+
+    monkeypatch.setattr(morning.rc, "plan", spy_plan)
+    memory = MemoryClient(InMemoryBackend())
+    from datetime import date as d, timedelta
+    base = d.fromisoformat(DATE)
+    for i in range(1, 15):
+        day = (base - timedelta(days=i)).isoformat()
+        memory.save_vital(DailyVital(date=day, total_sleep_min=324, bedtime_h=25.6,
+                                     wake_h=31.0, rem_sleep_min=90, deep_sleep_min=60))
+    morning.run_morning(DATE, _deps(memory=memory))
+    baseline = morning.bl.compute(
+        [v.to_sleep_input() for v in memory.get_vitals_desc(DATE, 14)],
+        min_target_sleep_h=load_settings().min_target_sleep_h,
+    )
+    assert baseline.sleep_h == pytest.approx(5.4, abs=0.2)
+    assert captured["bedtime_h"] == pytest.approx(31.0 + (24.0 - 7.0))
+
+
 def test_saved_curve_reproduces_each_displayed_calibrated_range(monkeypatch):
     captured = {}
     original = morning.prompts.morning_user

@@ -55,7 +55,7 @@ class InMemoryBackend:
         feedback_key = (PK_FEEDBACK, feedback_value["date"])
         event_key = (PK_FEEDBACK_EVENT, event_id)
         with self._lock:
-            if feedback_key in self._items or event_key in self._items:
+            if event_key in self._items:
                 return False
             self._items[feedback_key] = feedback_value
             self._items[event_key] = {"event_id": event_id, "status": "PROCESSED"}

@@ -210,7 +210,8 @@ def recommend_bedtime(
     # 既に探索区間の終端を過ぎている → 今すぐ寝るべき
     if now_h >= limit_h:
         curve, raw_mean, mean = _evaluate(now_h)
-        return BedtimeAdvice(now_h, math.ceil(mean), curve, "too_late", raw_mean)
+        return BedtimeAdvice(now_h, math.ceil(mean), curve, "too_late", raw_mean,
+                             max(0.0, baseline.wake_h - now_h))
 
     step_h = C.SCAN_STEP_MIN / 60.0
     span_h = limit_h - now_h

@@ -291,7 +291,7 @@ JSON は一時ファイルに書き、PowerShell の quoting と CLI 引数へ�
 ```powershell
 $ErrorActionPreference = "Stop"
 $TableName = "SleepTechTable"
-$Region = "ap-northeast-1"
+$Region = "us-east-1"
 $MigrationDir = Join-Path $env:TEMP "sleeptech-feedback-migration"
 New-Item -ItemType Directory -Force -Path $MigrationDir | Out-Null
 

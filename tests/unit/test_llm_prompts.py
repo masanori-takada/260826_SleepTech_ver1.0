@@ -58,6 +58,12 @@ def _advice(status: str, bedtime_h: float = 23.5) -> BedtimeAdvice:
     )
 
 
+def test_night_prompt_protects_wake_and_target_sleep_values():
+    prompt = night_user(_advice("ok"), Baseline(wake_h=32.6666667, sleep_h=5.4, target_sleep_h=7.0), 0.0)
+    assert "起床目安: 8:40" in prompt
+    assert "目標睡眠時間: 7.0時間" in prompt
+
+
 def test_night_user_all_statuses_have_no_forbidden_words():
     """night_user() が生成する固定文言（status_note を含む）に禁止語がない。"""
     for status in ("ok", "unreachable", "too_late"):

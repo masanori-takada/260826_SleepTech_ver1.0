@@ -138,20 +138,6 @@ def is_wakeup_trigger(text: str) -> bool:
     return bool(_WAKEUP_RE.match((text or "").strip()))
 
 
-def resolve_feedback_date(memory, today: str) -> str | None:
-    """回答を紐付ける日付を返す。
-
-    直近の未回答の夜予測を、当日と前日の2日分のみ見て探す
-    （FEEDBACK_LOOKBACK_DAYS=2 の range(2) のため、2日前は見ない）。
-    """
-    base = date_cls.fromisoformat(today)
-    for i in range(FEEDBACK_LOOKBACK_DAYS):
-        d = (base - timedelta(days=i)).isoformat()
-        if memory.get_prediction(d, "NIGHT") and memory.get_feedback(d) is None:
-            return d
-    return None
-
-
 def resolve_feedback_target(memory, today: str) -> FeedbackTarget | None:
     """当日・前日の夜質問から、前日起点の朝予測を評価対象として返す。"""
     base = date_cls.fromisoformat(today)
@@ -161,12 +147,8 @@ def resolve_feedback_target(memory, today: str) -> FeedbackTarget | None:
         evaluated_s = evaluated.isoformat()
         prediction_s = prediction.isoformat()
         message = memory.get_message(evaluated_s, "NIGHT")
-        if (
-            message is not None
-            and message.delivered
-            and memory.get_prediction(prediction_s, "MORNING") is not None
-            and memory.get_feedback(evaluated_s) is None
-        ):
+        if (message is not None and message.delivered
+                and memory.get_prediction(prediction_s, "MORNING") is not None):
             return FeedbackTarget(evaluated_s, prediction_s)
     return None
 

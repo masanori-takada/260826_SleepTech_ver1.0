@@ -89,14 +89,6 @@ def test_night_and_morning_use_same_date_when_night_rolls_over_midnight():
     assert hd.origin_date(night_now, night=True) == hd.origin_date(morning_now, morning=True) == "2026-08-26"
 
 
-def test_feedback_binds_to_the_latest_unanswered_night_prediction():
-    """回答は直近の未回答 PREDICT#NIGHT に紐付ける。"""
-    m = MemoryClient(InMemoryBackend())
-    m.save_prediction(Prediction(date="2026-08-25", slot="NIGHT"))
-    m.save_prediction(Prediction(date="2026-08-26", slot="NIGHT"))
-    assert wh.resolve_feedback_date(m, today="2026-08-26") == "2026-08-26"
-
-
 def test_feedback_targets_previous_origin_morning_prediction():
     m = MemoryClient(InMemoryBackend())
     m.save_message(Message(date="2026-08-27", slot="NIGHT", delivered=True))
@@ -106,6 +98,20 @@ def test_feedback_targets_previous_origin_morning_prediction():
 
     assert got.evaluated_date == "2026-08-27"
     assert got.prediction_date == "2026-08-26"
+
+
+def test_feedback_target_stays_on_today_after_it_was_already_answered():
+    """別イベントの再回答でも、既に回答済みだから前日へ移動しない。"""
+    m = MemoryClient(InMemoryBackend())
+    m.save_message(Message(date="2026-08-27", slot="NIGHT", delivered=True))
+    m.save_prediction(Prediction(date="2026-08-26", slot="MORNING", mean_drop_pct=8))
+    m.save_feedback(Feedback(date="2026-08-27", score=1, source_event_id="event-1"))
+    m.save_message(Message(date="2026-08-26", slot="NIGHT", delivered=True))
+    m.save_prediction(Prediction(date="2026-08-25", slot="MORNING", mean_drop_pct=8))
+
+    got = wh.resolve_feedback_target(m, today="2026-08-27")
+
+    assert got == wh.FeedbackTarget("2026-08-27", "2026-08-26")
 
 
 def test_feedback_never_targets_same_day_night_prediction():
@@ -121,47 +127,6 @@ def test_feedback_event_is_detected_as_processed_before_candidate_fallback():
 
     assert wh.feedback_event_processed(m, "event-1") is True
 
-
-def test_feedback_falls_back_to_previous_day():
-    """当日の夜メッセージがまだ無ければ前日に遡る。"""
-    m = MemoryClient(InMemoryBackend())
-    m.save_prediction(Prediction(date="2026-08-25", slot="NIGHT"))
-    assert wh.resolve_feedback_date(m, today="2026-08-26") == "2026-08-25"
-
-
-def test_feedback_does_not_go_back_more_than_two_days():
-    """2日より前には遡らない。"""
-    m = MemoryClient(InMemoryBackend())
-    m.save_prediction(Prediction(date="2026-08-20", slot="NIGHT"))
-    assert wh.resolve_feedback_date(m, today="2026-08-26") is None
-
-
-def test_feedback_skips_already_answered_days():
-    """既に回答済みの日には紐付けない。"""
-    from sleeptech.memory.schemas import Feedback
-
-    m = MemoryClient(InMemoryBackend())
-    m.save_prediction(Prediction(date="2026-08-25", slot="NIGHT"))
-    m.save_prediction(Prediction(date="2026-08-26", slot="NIGHT"))
-    m.save_feedback(Feedback(date="2026-08-26", score=3))
-    assert wh.resolve_feedback_date(m, today="2026-08-26") == "2026-08-25"
-
-
-def test_feedback_returns_none_when_no_prediction_exists():
-    m = MemoryClient(InMemoryBackend())
-    assert wh.resolve_feedback_date(m, today="2026-08-26") is None
-
-
-def test_feedback_does_not_bind_when_prediction_only_two_days_ago():
-    """ちょうど2日前にのみ夜予測がある場合は None（2日前は見ない）。"""
-    m = MemoryClient(InMemoryBackend())
-    m.save_prediction(Prediction(date="2026-08-24", slot="NIGHT"))
-    assert wh.resolve_feedback_date(m, today="2026-08-26") is None
-
-
-
-# 「前日にのみ夜予測がある場合に前日を返す」ケースは
-# test_feedback_falls_back_to_previous_day で既にカバーされているため重複させない。
 
 # NOTE(出荷前レビュー Minor 対応): 以前ここにあった3件のテスト
 # （test_texts_returns_empty_list_when_body_is_json_array 等）は

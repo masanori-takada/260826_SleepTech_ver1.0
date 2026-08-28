@@ -41,9 +41,18 @@ class StubLlm:
             return self.template
         time_s = next(l.split(": ")[1] for l in user.splitlines() if l.startswith("推奨就寝時刻"))
         pct = next(l.split(": ")[1] for l in user.splitlines() if l.startswith("明日の主要"))
+        late_lines = ""
+        if any(l.startswith("目標時刻は過ぎています。") for l in user.splitlines()):
+            late_lines = "\n" + "\n".join(
+                l for l in user.splitlines()
+                if l.startswith(("目標時刻は過ぎています。", "今から確保できる見込み:"))
+            )
         return (
-            f"今夜は{time_s}までに寝るのがおすすめです。"
-            f"明日の主要時間帯は{pct}の見込みです。信頼度：低（評価データ0件）。"
+            f"今夜は{time_s}までに寝るのがおすすめです。\n"
+            + next(l for l in user.splitlines() if l.startswith("起床目安:"))
+            + "\n" + next(l for l in user.splitlines() if l.startswith("目標睡眠時間:"))
+            + late_lines
+            + "\n" + f"明日の主要時間帯は{pct}の見込みです。信頼度：低（評価データ0件）。"
             "推定の目安です。実測の仕事能力ではありません。"
             "中途覚醒・HRV・心拍数は現行の%計算には使っていません。"
         )

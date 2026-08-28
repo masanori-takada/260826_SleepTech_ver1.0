@@ -54,6 +54,16 @@ def night_user(advice: BedtimeAdvice, baseline: Baseline, debt_h: float,
     }[advice.status]
 
     lines = [f"推奨就寝時刻: {fmt_hm(advice.bedtime_h)}"]
+    lines.extend([
+        f"起床目安: {fmt_hm_plain(baseline.wake_h)}",
+        f"目標睡眠時間: {baseline.effective_target_sleep_h:.1f}時間",
+    ])
+    if advice.status == "too_late" and advice.available_sleep_h is not None:
+        hours, minutes = divmod(round(advice.available_sleep_h * 60), 60)
+        lines.extend([
+            "目標時刻は過ぎています。今すぐ寝る",
+            f"今から確保できる見込み: {hours}時間{minutes:02d}分",
+        ])
     # I4対応: 低下率0%のときは % を本文に書かせない（「0%」の明記を必須にすると
     # 平常な晩ほど不自然な文章を強いることになり、ガードレールにも落ちやすくなる）。
     if range_low is not None and range_high is not None:

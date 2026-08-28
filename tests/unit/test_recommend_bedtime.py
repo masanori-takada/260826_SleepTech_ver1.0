@@ -2,6 +2,8 @@
 
 import math
 
+import pytest
+
 from sleeptech.memory.schemas import Baseline, SleepInput
 from sleeptech.model import constants as C
 from sleeptech.model import two_process as tp
@@ -35,6 +37,14 @@ def test_returns_ok_status_in_normal_case():
     assert got.status == "ok"
     assert 22.5 <= got.bedtime_h <= BASE.wake_h - C.MIN_SLEEP_BEFORE_WAKE_H
     assert got.mean_drop_pct <= C.TARGET_DROP_PCT
+
+
+def test_too_late_exposes_available_sleep_without_claiming_target():
+    """起床8:40・現在2:00なら確保見込みは6時間40分として扱う。"""
+    base = Baseline(wake_h=32.6666667, sleep_h=7.0, target_sleep_h=7.0)
+    got = tp.recommend_bedtime(now_h=26.0, baseline=base, debt_h=0.0)
+    assert got.status == "too_late"
+    assert got.available_sleep_h == pytest.approx(6.6666667)
 
 
 def test_does_not_recommend_less_than_baseline_sleep_when_possible():

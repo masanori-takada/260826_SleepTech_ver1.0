@@ -186,14 +186,28 @@ def test_feedback_desc_is_newest_first_and_limited():
     assert [f.date for f in c.get_feedback_desc(2)] == ["2026-08-27", "2026-08-26"]
 
 
-def test_save_feedback_once_is_atomic_for_the_same_feedback_key():
+def test_save_feedback_once_rejects_same_event_but_overwrites_with_new_event():
     c = _client()
     first = Feedback(date="2026-08-27", score=1, source_event_id="event-1")
+    same_event = Feedback(date="2026-08-27", score=2, source_event_id="event-1")
     second = Feedback(date="2026-08-27", score=5, source_event_id="event-2")
 
     assert c.save_feedback_once(first) is True
-    assert c.save_feedback_once(second) is False
-    assert c.get_feedback("2026-08-27").score == 1
+    assert c.save_feedback_once(same_event) is False
+    assert c.save_feedback_once(second) is True
+    assert c.get_feedback("2026-08-27").score == 5
+
+
+def test_concurrent_feedback_events_leave_one_latest_or_first_record():
+    """同時イベントは各イベントmarkerを一度だけ処理し、日付レコードを壊さない。"""
+    from concurrent.futures import ThreadPoolExecutor
+
+    c = _client()
+    feedbacks = [Feedback(date="2026-08-27", score=i, source_event_id=f"event-{i}") for i in range(1, 6)]
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        results = list(pool.map(c.save_feedback_once, feedbacks))
+    assert all(results)
+    assert c.get_feedback("2026-08-27").score in range(1, 6)
 
 
 def test_claim_feedback_event_once_is_atomic_for_unmatched_events():

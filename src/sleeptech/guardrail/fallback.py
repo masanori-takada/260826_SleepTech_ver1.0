@@ -17,8 +17,28 @@ def night_text(advice, baseline, debt_h: float, range_low=None, range_high=None,
                confidence="low", feedback_count=0) -> str:
     """夜のテンプレート文を返す。"""
     time_s = fmt_hm(advice.bedtime_h)
+    if advice.status == "too_late" and range_low is None:
+        available = advice.available_sleep_h if advice.available_sleep_h is not None else 0.0
+        hours, minutes = divmod(round(available * 60), 60)
+        return "\n".join([
+            f"目標時刻は過ぎています。今すぐ寝てください（{time_s}）。",
+            f"今から確保できる見込みは{hours}時間{minutes:02d}分です。可能なら起床時刻を調整してください。",
+            _LEGACY_ESTIMATE_NOTE,
+        ])
     if range_low is not None and range_high is not None:
         label = {"low": "低", "medium": "中", "high": "高"}.get(confidence, confidence)
+        if advice.status == "too_late":
+            available = advice.available_sleep_h if advice.available_sleep_h is not None else 0.0
+            hours, minutes = divmod(round(available * 60), 60)
+            return "\n".join([
+                f"起床目安: {fmt_hm_plain(baseline.wake_h)}",
+                f"目標睡眠時間: {baseline.effective_target_sleep_h:.1f}時間",
+                "目標時刻は過ぎています。今すぐ寝てください。",
+                f"今から確保できる見込みは{hours}時間{minutes:02d}分です。可能なら起床時刻を調整してください。",
+                f"明日の主要時間帯の低下見込みは{range_low}〜{range_high}%です。",
+                f"信頼度：{label}（評価データ{feedback_count}件）",
+                _ESTIMATE_NOTE, _ABILITY_NOTE, _UNUSED_NOTE,
+            ])
         return "\n".join([
             f"起床目安 {fmt_hm_plain(baseline.wake_h)}・{baseline.effective_target_sleep_h:.1f}時間の睡眠を確保するなら、遅くとも{time_s}までに就寝。",
             f"明日の主要時間帯の低下見込みは{range_low}〜{range_high}%です。",

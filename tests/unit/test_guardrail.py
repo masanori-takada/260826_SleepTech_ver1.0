@@ -219,6 +219,29 @@ _NOTES = (
 )
 
 
+@pytest.mark.parametrize("bad", [
+    "翌 1:30、低下見込み3〜13%ではありません。推定の目安です",
+    "翌 1:30、低下見込み3〜13%。「実測の仕事能力ではありません」は誤り",
+])
+def test_protected_night_lines_reject_semantic_inversion(bad):
+    facts = v.Facts(
+        times=[25.5], percents=[3, 13], allowed_percents=[3, 13],
+        required_ranges=[(3, 13)], required_confidence="低",
+        required_feedback_count=0, required_notes=_NOTES,
+    )
+    text = bad + "。信頼度：低（評価データ0件）。推定の目安です。" + "。".join(_NOTES)
+    assert not v.validate(text, facts).passed
+
+
+def test_protected_morning_lines_reject_semantic_inversion():
+    facts = v.Facts(
+        required_hourly_ranges=[(9, (3, 13))], required_confidence="低",
+        required_feedback_count=0, required_notes=_NOTES,
+    )
+    text = "9時台 低下見込み3〜13%ではありません。信頼度：低（評価データ0件）。推定の目安です。" + "。".join(_NOTES)
+    assert not v.validate(text, facts).passed
+
+
 def test_confidence_count_and_required_notes_are_required():
     facts = v.Facts(
         times=[25.5], percents=[3, 13], allowed_percents=[3, 13],

@@ -40,6 +40,8 @@ REQUIRED_NOTES = (
     "中途覚醒・HRV・心拍数は現行の%計算には使っていません",
 )
 _RELATIVE_NOTE = re.compile(r"(?:本人|あなた)の平常時を\s*100%")
+_INVERTED_RANGE = re.compile(r"低下見込み[^。\n]*%\s*(?:ではありません|ではない)")
+_INVERTED_NOTE = re.compile(r"[「『]\s*実測の仕事能力ではありません\s*[」』]\s*は\s*誤り")
 _FULLWIDTH = str.maketrans("０１２３４５６７８９：％－＋−", "0123456789:%-+-")
 
 
@@ -65,6 +67,7 @@ class Facts:
     required_hourly_ranges: list[tuple[int, tuple[int, int]]] | None = None
     required_confidence: str | None = None
     required_feedback_count: int | None = None
+    required_phrases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -209,6 +212,12 @@ def validate(text: str, facts: Facts) -> ValidationResult:
     if not text or not text.strip():
         return ValidationResult(False, "empty")
     normalized_text = normalize(text)
+    if _INVERTED_RANGE.search(text) or _INVERTED_NOTE.search(text):
+        return ValidationResult(False, "semantic_inversion")
+    for phrase in facts.required_phrases:
+        exact_lines = [line.strip().rstrip("。．") for line in text.splitlines()]
+        if exact_lines.count(phrase) != 1:
+            return ValidationResult(False, "required_phrase")
     if _FORBIDDEN_DISPLAY.search(normalized_text):
         return ValidationResult(False, "forbidden_display")
     for note in facts.required_notes:
@@ -245,8 +254,11 @@ def validate(text: str, facts: Facts) -> ValidationResult:
         if pattern.search(text):
             return ValidationResult(False, reason)
 
+    numeric_text = text
+    for phrase in facts.required_phrases:
+        numeric_text = numeric_text.replace(phrase, "")
     found_times, found_pcts, explicit_positive, ambiguous, invalid_100, found_ranges, found_hourly_ranges, all_ranges_bound = _extract(
-        text, facts.require_day_prefix
+        numeric_text, facts.require_day_prefix
     )
     if explicit_positive or ambiguous or invalid_100:
         return ValidationResult(False, "numbers")

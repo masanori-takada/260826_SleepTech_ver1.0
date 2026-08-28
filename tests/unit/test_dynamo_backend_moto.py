@@ -159,7 +159,7 @@ def test_transient_transaction_cancellation_is_propagated(backend):
             {"Put": {"TableName": TABLE_NAME,
                       "Item": {"pk": "FEEDBACK", "sk": "2026-08-28",
                                 "json": '{"date": "2026-08-28", "score": 1}'},
-                      "ConditionExpression": "attribute_not_exists(pk)"}},
+                          }},
             {"Put": {"TableName": TABLE_NAME,
                       "Item": {"pk": "IDEM#FEEDBACK", "sk": "event-transient",
                                 "status": "PROCESSED",
@@ -172,11 +172,6 @@ def test_transient_transaction_cancellation_is_propagated(backend):
         "transact_write_items", "TransactionCanceledException",
         expected_params=expected_transact,
     )
-    stubber.add_response("get_item", {}, {
-        "TableName": TABLE_NAME,
-        "Key": {"pk": "FEEDBACK", "sk": "2026-08-28"},
-        "ConsistentRead": True,
-    })
     stubber.add_response("get_item", {}, {
         "TableName": TABLE_NAME,
         "Key": {"pk": "IDEM#FEEDBACK", "sk": "event-transient"},
@@ -192,3 +187,4 @@ def test_feedback_transaction_condition_collision_returns_false(backend):
 
     assert backend.put_feedback_once(feedback, "event-1") is True
     assert backend.put_feedback_once(feedback, "event-1") is False
+    assert backend.put_feedback_once({"date": "2026-08-28", "score": 5}, "event-2") is True

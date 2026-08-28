@@ -51,6 +51,17 @@ def test_night_text_changes_for_too_late_status():
     assert "今すぐ" in fallback.night_text(too_late, BASE, debt_h=5.0)
 
 
+def test_night_text_too_late_reports_available_sleep_instead_of_securing_target():
+    advice = BedtimeAdvice(
+        bedtime_h=26.0, mean_drop_pct=25, curve=CURVE, status="too_late",
+        available_sleep_h=6 + 40 / 60,
+    )
+    text = fallback.night_text(advice, Baseline(wake_h=32 + 40 / 60, sleep_h=7.0, target_sleep_h=7.0), debt_h=5.0)
+    assert "目標時刻は過ぎています" in text
+    assert "6時間40分" in text
+    assert "7.0時間を確保" not in text
+
+
 def test_night_text_too_late_with_zero_drop_avoids_minus_zero_percent():
     """M1: too_late でも mean_drop_pct=0 なら「-0%」を出さない。"""
     too_late_zero = BedtimeAdvice(bedtime_h=31.0, mean_drop_pct=0, curve=CURVE, status="too_late")

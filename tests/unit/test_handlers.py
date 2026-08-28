@@ -809,6 +809,21 @@ def test_same_batch_duplicate_event_id_saves_and_replies_only_once(monkeypatch):
     assert replies == [("r1", "評価1を記録しました。次回以降の予測補正に反映します。")]
 
 
+def test_different_event_id_in_same_day_overwrites_latest_feedback(monkeypatch):
+    _patch_webhook_dependencies(monkeypatch)
+    memory = MemoryClient(InMemoryBackend())
+    memory.save_message(Message(date="2026-08-27", slot="NIGHT", delivered=True))
+    memory.save_prediction(Prediction(date="2026-08-26", slot="MORNING", mean_drop_pct=8))
+    monkeypatch.setattr(wh.hd, "_memory", lambda settings: memory)
+    monkeypatch.setattr(wh.hd, "_push_from_secret", lambda secret_data: type("R", (), {"reply": lambda *a: None})())
+
+    wh.handler(_feedback_webhook_event_with_id("評価:1", "r1", "event-1"))
+    wh.handler(_feedback_webhook_event_with_id("評価:5", "r2", "event-2"))
+
+    assert memory.get_feedback("2026-08-27").score == 5
+    assert memory.get_feedback("2026-08-27").source_event_id == "event-2"
+
+
 def test_same_event_retry_does_not_pollute_previous_feedback_candidate(monkeypatch):
     _patch_webhook_dependencies(monkeypatch)
     memory = MemoryClient(InMemoryBackend())

@@ -89,15 +89,12 @@ class DynamoBackend:
         try:
             self._table.meta.client.transact_write_items(
                 TransactItems=[
-                    {"Put": {"TableName": self._table.name, "Item": feedback_item,
-                             "ConditionExpression": "attribute_not_exists(pk)"}},
+                    {"Put": {"TableName": self._table.name, "Item": feedback_item}},
                     {"Put": {"TableName": self._table.name, "Item": event_item,
                              "ConditionExpression": "attribute_not_exists(pk)"}},
                 ]
             )
         except self._table.meta.client.exceptions.TransactionCanceledException:
-            if self._exists_strong("FEEDBACK", feedback_value["date"]):
-                return False
             if self._exists_strong("IDEM#FEEDBACK", event_id):
                 return False
             raise

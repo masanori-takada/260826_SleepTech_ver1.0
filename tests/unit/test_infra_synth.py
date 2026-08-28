@@ -385,6 +385,8 @@ def test_deploy_migration_uses_safe_cli_and_powershell_json_patterns():
     assert "ConditionExpression = \"#json = :old\"" in migration
     assert "UpdateExpression = \"SET #json = :new\"" in migration
     assert "削除件数: 0" in migration
+    assert '$Region = "us-east-1"' in migration
+    assert '$Region = "ap-northeast-1"' not in migration
 
 
 def test_synth_asset_contains_no_compiled_python_artifacts():
