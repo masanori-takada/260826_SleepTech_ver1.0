@@ -77,14 +77,28 @@ cdk deploy
 次の CloudFormation コマンドで論理IDから取得する。Secret の値は返さない。
 
 ```powershell
-foreach ($logicalId in @("NightFn", "MorningFn", "WebhookFn", "BackfillFn")) {
-  aws cloudformation describe-stack-resource `
-    --stack-name SleepTechStack `
-    --logical-resource-id $logicalId `
-    --query "StackResourceDetail.[LogicalResourceId,PhysicalResourceId]" `
-    --output table
-  if ($LASTEXITCODE -ne 0) { throw "物理名の取得に失敗したため停止: $logicalId" }
+$resourceRows = aws cloudformation list-stack-resources `
+  --stack-name SleepTechStack `
+  --query "StackResourceSummaries[?ResourceType=='AWS::Lambda::Function'].[LogicalResourceId,PhysicalResourceId]" `
+  --output json | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw "Lambda物理名一覧の取得に失敗したため停止" }
+
+$physicalByPrefix = @{}
+foreach ($prefix in @("NightFn", "MorningFn", "WebhookFn", "BackfillFn")) {
+  $matches = @($resourceRows | Where-Object {
+    $_[0] -like "$prefix*" -and
+    -not [string]::IsNullOrWhiteSpace([string]$($_[1]))
+  })
+  if ($matches.Count -ne 1) {
+    throw "物理名の解決対象が0件または複数件: $prefix ($($matches.Count)件)"
+  }
+  $physicalByPrefix[$prefix] = [string]$matches[0][1]
 }
+$NightFn = $physicalByPrefix["NightFn"]
+$MorningFn = $physicalByPrefix["MorningFn"]
+$WebhookFn = $physicalByPrefix["WebhookFn"]
+$BackfillFn = $physicalByPrefix["BackfillFn"]
+Write-Output "Lambda物理名を4件解決しました"
 ```
 
 ---
@@ -138,13 +152,15 @@ cd ..
 
 手動実行するなら `date` + `now_h` のペアが分かりやすい:
 
-```bash
-aws lambda invoke \
-  --function-name <NightFn の物理名> \
-  --payload '{"date":"2026-08-26","now_h":22.5}' \
-  --cli-binary-format raw-in-base64-out \
-  out_night.json
-cat out_night.json
+```powershell
+$nightOutput = Join-Path $env:TEMP "sleeptech-night-response.json"
+aws lambda invoke `
+  --function-name $NightFn `
+  --payload '{"date":"2026-08-26","now_h":22.5}' `
+  --cli-binary-format raw-in-base64-out `
+  $nightOutput
+if ($LASTEXITCODE -ne 0) { throw "NightFn invokeに失敗したため停止" }
+Get-Content $nightOutput
 ```
 
 または実際のスケジュール起動を模したいなら `{}` のみを渡して壁時計時刻に任せる。
@@ -157,13 +173,15 @@ cat out_night.json
 - `{"date": "2026-08-26"}` （`date` のみで良い。夜と違い `now_h` は不要）
 - `{"scheduled_time": "2026-08-26T23:00:00Z"}` （EventBridge Scheduler形式）
 
-```bash
-aws lambda invoke \
-  --function-name <MorningFn の物理名> \
-  --payload '{"date":"2026-08-26"}' \
-  --cli-binary-format raw-in-base64-out \
-  out_morning.json
-cat out_morning.json
+```powershell
+$morningOutput = Join-Path $env:TEMP "sleeptech-morning-response.json"
+aws lambda invoke `
+  --function-name $MorningFn `
+  --payload '{"date":"2026-08-26"}' `
+  --cli-binary-format raw-in-base64-out `
+  $morningOutput
+if ($LASTEXITCODE -ne 0) { throw "MorningFn invokeに失敗したため停止" }
+Get-Content $morningOutput
 ```
 
 朝フローで使う `date` は夜メッセージと同じ日付を指定すること（`night_handler` の起点日と揃える。次項参照）。
@@ -450,9 +468,11 @@ LINE Developers と LINE Official Account Manager の既存ログイン状態を
 1. LINE Developers の対象チャネルで **Messaging API設定** を開き、Webhook URL が
    `WebhookFunctionUrl` と一致していることを確認する。
 2. LINE Developers の Messaging API設定で **Webhookの利用** を ON のまま維持する。
-3. LINE Official Account Manager の **設定 → 応答設定 → 応答メッセージ → 編集** を
-   開き、**応答メッセージをオフ**にして保存する。
-4. 同画面の Chat の応答方法も自動文を返さない設定にし、汎用の自動応答を無効にする。
+3. LINE Developers コンソールの **Messaging API設定** で **Auto-reply messages
+   （応答メッセージ）** の **Edit（編集）** を押し、LINE Official Account Manager の
+   **Response settings（応答設定）** へ遷移する。
+4. 遷移先で**応答メッセージをOFF**にして保存する。LINE Developers側の**Webhookの利用は
+   ONのまま維持**する。
 5. 画面を再読み込みして、応答メッセージがオフ、Webhookの利用がオンのままであることを
    再確認する。
 

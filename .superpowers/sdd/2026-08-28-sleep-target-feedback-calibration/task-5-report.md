@@ -78,3 +78,40 @@
 - AWSデプロイ、DynamoDBの既存Feedback更新、LINE管理画面操作、実メッセージ送信、
   本番Scheduler/CloudWatch確認、Sol最終レビューは未実施。これらは運用担当者／別工程で
   実施する。
+
+## Fix Round 2/5 対応
+
+### 修正内容
+
+- 物理Lambda名の解決を `list-stack-resources` のLambdaリソース一覧から行う方式へ変更した。
+  `ResourceType` をJMESPathでLambdaに限定し、PowerShellで論理IDの
+  `NightFn*` / `MorningFn*` / `WebhookFn*` / `BackfillFn*` prefixを照合する。
+  各prefixが0件、複数件、または `PhysicalResourceId` が空の場合は停止する。
+- 解決した `$NightFn`、`$MorningFn` を後続のPowerShell `aws lambda invoke` へ渡すようにし、
+  固定hashや物理名プレースホルダーを廃止した。
+- LINE導線を「LINE Developersコンソール → Messaging API設定 → Auto-reply messages
+  （応答メッセージ）のEdit（編集） → LINE Official Account ManagerのResponse settings
+  （応答設定）」と明示し、Official Account Manager側にEdit導線がある記述を削除した。
+- 上記条件と導線をinfra契約テストへ追加した。
+
+### RED/GREEN・構文検証
+
+- 追加契約アサーションは、旧 `describe-stack-resource` 手順と旧LINE導線の状態でREDを確認。
+- 文書修正後、対象テストは `1 passed` でGREEN。
+- AWS CLIスケルトンでJMESPath式を検証し、終了コード0を確認。
+- `docs/deploy.md` のPowerShell 8ブロックをPowerShell ASTで解析し、成功。
+
+### Fix Round 2 fresh検証
+
+- 全pytest: `532 passed in 68.50s`
+- compileall: `python -m compileall -q src infra` — 成功
+- strict synth: `cd infra; cdk synth --strict` — 成功
+- read-only CDK diff: `cd infra; cdk diff SleepTechStack --fail false` — 成功。削除・
+  置換なし。今回の変更によるCDKリソース差分なし。
+- `git diff --check` — 成功
+
+### 件数・残課題
+
+- 変更ファイル: 3（`docs/deploy.md`、`tests/unit/test_infra_synth.py`、本報告書）
+- 追加契約テストアサーション: 8項目
+- AWSデプロイ、DynamoDB本番更新、LINE管理画面操作、実機確認、Sol最終レビューは未実施。

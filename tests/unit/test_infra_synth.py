@@ -357,7 +357,15 @@ def test_deploy_migration_uses_safe_cli_and_powershell_json_patterns():
         "update-function" + "-configuration",
     )
     assert all(command not in migration for command in forbidden_commands)
-    assert "describe-stack-resource" in deploy_doc
+    assert "describe-stack-resource" not in deploy_doc
+    assert "list-stack-resources" in deploy_doc
+    assert "ResourceType=='AWS::Lambda::Function'" in deploy_doc
+    assert "-like \"$prefix*\"" in deploy_doc
+    assert "物理名の解決対象が0件または複数件" in deploy_doc
+    assert "$NightFn" in deploy_doc and "$MorningFn" in deploy_doc
+    assert "Auto-reply messages" in deploy_doc
+    assert "Response settings" in deploy_doc
+    assert "LINE Official Account Manager の **設定 → 応答設定 → 応答メッセージ → 編集**" not in deploy_doc
     assert "BackfillFn" in deploy_doc
     assert "Set-Content -Encoding UTF8" not in migration
     assert "UTF8Encoding]::new($false)" in migration
