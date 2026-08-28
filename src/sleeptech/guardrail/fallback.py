@@ -8,8 +8,8 @@ from sleeptech.timefmt import fmt_hm, fmt_hm_plain
 
 _ESTIMATE_NOTE = "※睡眠モデルと主観評価による推定の目安（範囲）です"
 _LEGACY_ESTIMATE_NOTE = "※あなたの平常時を100%とした推定の目安です"
-_ABILITY_NOTE = "※実測の仕事能力ではありません"
-_UNUSED_NOTE = "※中途覚醒・HRV・心拍数は現行の%計算には使っていません"
+_ABILITY_NOTE = "実測の仕事能力ではありません"
+_UNUSED_NOTE = "中途覚醒・HRV・心拍数は現行の%計算には使っていません"
 _LOW_DATA_NOTE = "※まだデータが少ないため精度は低めです"
 
 
@@ -111,7 +111,7 @@ def morning_text(curve, ranges_or_plan, recovery_plan=None, vital=None,
     for index, drop in enumerate(curve):
         mark = "  ← 谷" if drop is worst and drop.focus_pct > 0 else ""
         low, high = ranges[index]
-        lines.append(f"  {drop.hour}時台　低下見込み {low}〜{high}%{mark}")
+        lines.append(f"{drop.hour}時台 低下見込み{low}〜{high}%{mark}")
 
     lines.append("")
     lines.append("リカバリー")

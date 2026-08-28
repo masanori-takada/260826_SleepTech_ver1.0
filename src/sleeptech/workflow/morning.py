@@ -147,6 +147,7 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
     # normalize() が 14:00 / 16:00 を抽出し、許可外＝捏造として弾かれてしまう
     # （「14時台」表記だけは除外規則で通るため、自然な言い換えほど不安定だった）。
     allowed_times = times + [float(d.hour) for d in curve]
+    confidence_label = {"low": "低", "medium": "中", "high": "高"}[cal.confidence]
     facts = gv.Facts(
         times=times,
         percents=list(ranges[worst_index]),
@@ -156,6 +157,11 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
         required_feedback_count=cal.feedback_count,
         required_notes=gv.REQUIRED_NOTES,
         required_hourly_ranges=[(d.hour, ranges[i]) for i, d in enumerate(curve)],
+        protected_lines=tuple(
+            [f"{d.hour}時台 低下見込み{ranges[i][0]}〜{ranges[i][1]}%" for i, d in enumerate(curve)]
+            + [f"信頼度：{confidence_label}（評価データ{cal.feedback_count}件）"]
+            + list(gv.REQUIRED_NOTES)
+        ),
     )
     body, used_fallback, regen_count = _compose(
         deps, curve, ranges, plan, vital, cal.confidence, cal.feedback_count, facts, log,

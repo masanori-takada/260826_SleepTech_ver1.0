@@ -114,6 +114,26 @@ def test_feedback_target_stays_on_today_after_it_was_already_answered():
     assert got == wh.FeedbackTarget("2026-08-27", "2026-08-26")
 
 
+def test_feedback_target_does_not_fallback_to_answered_yesterday_when_today_has_no_candidate():
+    """当日候補がないとき、回答済みの前日へ別イベントを誤紐付けしない。"""
+    m = MemoryClient(InMemoryBackend())
+    m.save_message(Message(date="2026-08-27", slot="NIGHT", delivered=True))
+    m.save_prediction(Prediction(date="2026-08-26", slot="MORNING"))
+    m.save_feedback(Feedback(date="2026-08-27", score=1, source_event_id="old"))
+
+    assert wh.resolve_feedback_target(m, today="2026-08-28") is None
+
+
+def test_feedback_target_falls_back_to_unanswered_yesterday():
+    m = MemoryClient(InMemoryBackend())
+    m.save_message(Message(date="2026-08-27", slot="NIGHT", delivered=True))
+    m.save_prediction(Prediction(date="2026-08-26", slot="MORNING"))
+
+    assert wh.resolve_feedback_target(m, today="2026-08-28") == wh.FeedbackTarget(
+        "2026-08-27", "2026-08-26"
+    )
+
+
 def test_feedback_never_targets_same_day_night_prediction():
     m = MemoryClient(InMemoryBackend())
     m.save_prediction(Prediction(date="2026-08-27", slot="NIGHT"))

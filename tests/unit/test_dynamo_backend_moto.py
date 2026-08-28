@@ -188,3 +188,41 @@ def test_feedback_transaction_condition_collision_returns_false(backend):
     assert backend.put_feedback_once(feedback, "event-1") is True
     assert backend.put_feedback_once(feedback, "event-1") is False
     assert backend.put_feedback_once({"date": "2026-08-28", "score": 5}, "event-2") is True
+
+
+def test_feedback_old_event_is_marker_only_and_cannot_overwrite_newer_feedback(backend):
+    table = boto3.resource("dynamodb", region_name=REGION).Table(TABLE_NAME)
+    newer = {"date": "2026-08-28", "score": 5, "answered_at": "2026-08-28T14:10:00Z"}
+    older = {"date": "2026-08-28", "score": 1, "answered_at": "2026-08-28T14:00:00Z"}
+
+    assert backend.put_feedback_once(newer, "event-new") is True
+    assert backend.put_feedback_once(older, "event-old") is False
+    assert backend.get("FEEDBACK", "2026-08-28")["score"] == 5
+    assert backend.get("IDEM#FEEDBACK", "event-old")["status"] == "PROCESSED"
+    assert table.get_item(Key={"pk": "FEEDBACK", "sk": "2026-08-28"})["Item"]["answered_at"] == newer["answered_at"]
+
+
+def test_feedback_old_then_new_updates_and_same_event_is_noop(backend):
+    old = {"date": "2026-08-29", "score": 1, "answered_at": "2026-08-29T14:00:00Z"}
+    new = {"date": "2026-08-29", "score": 5, "answered_at": "2026-08-29T14:10:00Z"}
+
+    assert backend.put_feedback_once(old, "event-old") is True
+    assert backend.put_feedback_once(new, "event-new") is True
+    assert backend.put_feedback_once({**new, "score": 2}, "event-new") is False
+    assert backend.get("FEEDBACK", "2026-08-29")["score"] == 5
+
+
+def test_feedback_newer_event_retries_after_transaction_conflict(backend):
+    """競合取消後、強整合readで相手が古いままだと一度だけ再試行する。"""
+    client = backend._table.meta.client
+    incoming = {"date": "2026-08-30", "score": 5, "answered_at": "2026-08-30T14:10:00Z"}
+    stubber = Stubber(client)
+    empty = {"TableName": TABLE_NAME, "Key": {"pk": "FEEDBACK", "sk": "2026-08-30"}, "ConsistentRead": True}
+    marker = {"TableName": TABLE_NAME, "Key": {"pk": "IDEM#FEEDBACK", "sk": "event-retry"}, "ConsistentRead": True}
+    stubber.add_response("get_item", {}, empty)
+    stubber.add_client_error("transact_write_items", "TransactionCanceledException")
+    stubber.add_response("get_item", {}, marker)
+    stubber.add_response("get_item", {}, empty)
+    stubber.add_response("transact_write_items", {})
+    with stubber:
+        assert backend.put_feedback_once(incoming, "event-retry") is True

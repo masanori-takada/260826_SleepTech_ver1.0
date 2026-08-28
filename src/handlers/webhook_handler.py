@@ -19,6 +19,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date as date_cls
+from datetime import datetime, timezone
 from datetime import timedelta
 
 from sleeptech.config import load_settings
@@ -54,6 +55,7 @@ class AuthorizedText:
     reply_token: str
     webhook_event_id: str | None
     webhook_event_id_present: bool
+    event_timestamp_ms: int | None = None
 
 
 def _response(status_code: int, error: str) -> dict:
@@ -148,7 +150,8 @@ def resolve_feedback_target(memory, today: str) -> FeedbackTarget | None:
         prediction_s = prediction.isoformat()
         message = memory.get_message(evaluated_s, "NIGHT")
         if (message is not None and message.delivered
-                and memory.get_prediction(prediction_s, "MORNING") is not None):
+                and memory.get_prediction(prediction_s, "MORNING") is not None
+                and (offset == 0 or memory.get_feedback(evaluated_s) is None)):
             return FeedbackTarget(evaluated_s, prediction_s)
     return None
 
@@ -214,6 +217,10 @@ def _authorized_texts(payload: dict, user_id: str) -> list[AuthorizedText]:
                     else None
                 ),
                 webhook_event_id_present="webhookEventId" in ev,
+                event_timestamp_ms=(
+                    ev.get("timestamp") if isinstance(ev.get("timestamp"), int)
+                    and not isinstance(ev.get("timestamp"), bool) else None
+                ),
             ))
     return out
 
@@ -278,13 +285,20 @@ def handler(event, context=None) -> dict:
                 continue
             target = resolve_feedback_target(memory, hd.origin_date(now))
             if target:
+                answered_at = (
+                    datetime.fromtimestamp(
+                        authorized.event_timestamp_ms / 1000.0, tz=timezone.utc
+                    ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                    if authorized.event_timestamp_ms is not None
+                    else now.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                )
                 saved = memory.save_feedback_once(
                     Feedback(
                         date=target.evaluated_date,
                         evaluated_date=target.evaluated_date,
                         prediction_date=target.prediction_date,
                         score=score,
-                        answered_at=now.isoformat(timespec="seconds"),
+                        answered_at=answered_at,
                         source_event_id=event_id,
                     )
                 )

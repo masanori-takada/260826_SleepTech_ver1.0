@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -20,6 +21,19 @@ DEFAULT_VITAL_TTL_DAYS = 365
 # M4対応: boto3 既定の connect/read タイムアウト（各60秒）は60秒Lambdaに対して
 # 未拘束なので短く切る。DynamoDBはリトライ前提で使うため max_attempts も絞る。
 _BOTO_CONFIG = Config(connect_timeout=2, read_timeout=3, retries={"max_attempts": 2})
+
+
+def _parse_answered_at(value: str | None) -> datetime | None:
+    """旧形式を含むISO時刻をUTCの比較値へ変換する。"""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
 
 
 class DynamoBackend:
@@ -58,6 +72,9 @@ class DynamoBackend:
         }
         if pk.startswith("IDEM#") and "status" in value:
             item["status"] = value["status"]
+        if pk == "FEEDBACK" and isinstance(value.get("answered_at"), str):
+            # 評価時刻は比較・監査用にもトップレベルへ置く。
+            item["answered_at"] = value["answered_at"]
         if "lease_until" in value:
             # DynamoDB の Table リソースは float を受け付けないため Decimal に変換する
             item["lease_until"] = Decimal(str(value["lease_until"]))
@@ -80,25 +97,52 @@ class DynamoBackend:
         return True
 
     def put_feedback_once(self, feedback_value: dict, event_id: str) -> bool:
-        """評価とイベントclaimをDynamoDBトランザクションで一度だけ保存する。"""
-        feedback_item = self._item("FEEDBACK", feedback_value["date"], feedback_value)
+        """イベント時刻順で評価を更新し、古いイベントもmarkerだけclaimする。"""
+        incoming_at = _parse_answered_at(feedback_value.get("answered_at"))
+        # 時刻を持たない旧呼び出しは従来の無条件Putを維持する。
+        if incoming_at is None:
+            should_update = True
+        else:
+            current = self.get_strong("FEEDBACK", feedback_value["date"])
+            current_at = _parse_answered_at(current.get("answered_at")) if current else None
+            should_update = current is None or current_at is None or incoming_at >= current_at
         event_item = self._item(
             "IDEM#FEEDBACK", event_id,
             {"event_id": event_id, "status": "PROCESSED"},
         )
-        try:
-            self._table.meta.client.transact_write_items(
-                TransactItems=[
-                    {"Put": {"TableName": self._table.name, "Item": feedback_item}},
-                    {"Put": {"TableName": self._table.name, "Item": event_item,
-                             "ConditionExpression": "attribute_not_exists(pk)"}},
-                ]
-            )
-        except self._table.meta.client.exceptions.TransactionCanceledException:
-            if self._exists_strong("IDEM#FEEDBACK", event_id):
-                return False
-            raise
-        return True
+        for attempt in range(2):
+            feedback_item = self._item("FEEDBACK", feedback_value["date"], feedback_value)
+            feedback_put = {"Put": {"TableName": self._table.name, "Item": feedback_item}}
+            if incoming_at is not None:
+                feedback_put["Put"]["ConditionExpression"] = (
+                    "attribute_not_exists(answered_at) OR answered_at <= :incoming_answered_at"
+                )
+                feedback_put["Put"]["ExpressionAttributeValues"] = {
+                    ":incoming_answered_at": feedback_value["answered_at"]
+                }
+            items = ([feedback_put] if should_update else []) + [
+                {"Put": {"TableName": self._table.name, "Item": event_item,
+                          "ConditionExpression": "attribute_not_exists(pk)"}}
+            ]
+            try:
+                self._table.meta.client.transact_write_items(
+                    TransactItems=items
+                )
+                return should_update
+            except self._table.meta.client.exceptions.TransactionCanceledException:
+                if self._exists_strong("IDEM#FEEDBACK", event_id):
+                    return False
+                if incoming_at is None or attempt == 1:
+                    raise
+                # 競合相手が先に新しい評価を書いた場合はmarkerだけをclaimする。
+                latest = self.get_strong("FEEDBACK", feedback_value["date"])
+                latest_at = _parse_answered_at(latest.get("answered_at")) if latest else None
+                if latest_at is not None and latest_at >= incoming_at:
+                    should_update = False
+                else:
+                    # 一時的な競合なら強整合再読込後に一度だけ再試行する。
+                    should_update = True
+        raise RuntimeError("評価イベントの保存に失敗しました")
 
     def put_feedback_event_once(self, event_id: str) -> bool:
         """未紐付け評価イベントを条件付きで一度だけclaimする。"""

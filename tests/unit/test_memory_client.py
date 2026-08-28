@@ -198,6 +198,30 @@ def test_save_feedback_once_rejects_same_event_but_overwrites_with_new_event():
     assert c.get_feedback("2026-08-27").score == 5
 
 
+def test_feedback_keeps_newer_event_timestamp_when_old_event_finishes_late():
+    c = _client()
+    newer = Feedback(date="2026-08-27", score=5,
+                     answered_at="2026-08-27T23:10:00Z", source_event_id="new")
+    older = Feedback(date="2026-08-27", score=1,
+                     answered_at="2026-08-27T23:00:00Z", source_event_id="old")
+
+    assert c.save_feedback_once(newer) is True
+    assert c.save_feedback_once(older) is False
+    assert c.get_feedback("2026-08-27").score == 5
+
+
+def test_feedback_updates_from_old_event_to_new_event_timestamp():
+    c = _client()
+    older = Feedback(date="2026-08-27", score=1,
+                     answered_at="2026-08-27T23:00:00Z", source_event_id="old")
+    newer = Feedback(date="2026-08-27", score=5,
+                     answered_at="2026-08-27T23:10:00Z", source_event_id="new")
+
+    assert c.save_feedback_once(older) is True
+    assert c.save_feedback_once(newer) is True
+    assert c.get_feedback("2026-08-27").score == 5
+
+
 def test_concurrent_feedback_events_leave_one_latest_or_first_record():
     """同時イベントは各イベントmarkerを一度だけ処理し、日付レコードを壊さない。"""
     from concurrent.futures import ThreadPoolExecutor

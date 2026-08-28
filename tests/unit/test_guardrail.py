@@ -228,6 +228,9 @@ def test_protected_night_lines_reject_semantic_inversion(bad):
         times=[25.5], percents=[3, 13], allowed_percents=[3, 13],
         required_ranges=[(3, 13)], required_confidence="低",
         required_feedback_count=0, required_notes=_NOTES,
+        protected_lines=(
+            "低下見込み3〜13%", "信頼度：低（評価データ0件）", *_NOTES,
+        ),
     )
     text = bad + "。信頼度：低（評価データ0件）。推定の目安です。" + "。".join(_NOTES)
     assert not v.validate(text, facts).passed
@@ -237,6 +240,7 @@ def test_protected_morning_lines_reject_semantic_inversion():
     facts = v.Facts(
         required_hourly_ranges=[(9, (3, 13))], required_confidence="低",
         required_feedback_count=0, required_notes=_NOTES,
+        protected_lines=("9時台 低下見込み3〜13%", "信頼度：低（評価データ0件）", *_NOTES),
     )
     text = "9時台 低下見込み3〜13%ではありません。信頼度：低（評価データ0件）。推定の目安です。" + "。".join(_NOTES)
     assert not v.validate(text, facts).passed
@@ -346,3 +350,64 @@ def test_negative_single_percent_and_time_hyphen_are_not_ranges():
     facts = v.Facts(times=[23.5], percents=[8])
     text = "23:30-24:30まで、低下見込み-8%。推定の目安です"
     assert v.validate(text, facts).passed
+
+
+@pytest.mark.parametrize("bad", [
+    "低下見込み3〜13%とは限りません",
+    "信頼度：低ではなく高",
+    "実測の仕事能力ではありませんが実測値です",
+])
+def test_protected_lines_reject_additional_semantic_redefinition(bad):
+    facts = v.Facts(
+        times=[25.5], percents=[3, 13], allowed_percents=[3, 13],
+        required_ranges=[(3, 13)], required_confidence="低",
+        required_feedback_count=0, required_notes=_NOTES,
+        protected_lines=("低下見込み3〜13%", "信頼度：低（評価データ0件）", *_NOTES),
+    )
+    text = (
+        "翌 1:30、低下見込み3〜13%。信頼度：低（評価データ0件）。"
+        "推定の目安です。実測の仕事能力ではありません。"
+        "中途覚醒・HRV・心拍数は現行の%計算には使っていません。"
+    )
+    if bad.startswith("低下"):
+        text = text.replace("低下見込み3〜13%", bad)
+    elif bad.startswith("信頼"):
+        text = text.replace("信頼度：低（評価データ0件）", bad)
+    else:
+        text = text.replace(_NOTES[0], bad)
+    assert not v.validate(text, facts).passed
+
+
+def test_protected_target_line_rejects_second_target_value():
+    facts = v.Facts(
+        times=[25.5], percents=[3, 13], allowed_percents=[3, 13],
+        required_ranges=[(3, 13)], required_phrases=("目標睡眠時間: 7.0時間",),
+    )
+    text = "翌 1:30、目標睡眠時間: 7.0時間。目標睡眠時間は5.0時間です。低下見込み3〜13%。推定の目安です"
+    assert not v.validate(text, facts).passed
+
+
+@pytest.mark.parametrize("bad", [
+    "低下見込み3〜13%は嘘です",
+    "実測の仕事能力ではありません。実際は実測値です",
+])
+def test_protected_lines_are_exact_allowed_segments(bad):
+    facts = v.Facts(
+        protected_lines=(
+            "低下見込み3〜13%",
+            "信頼度：低（評価データ0件）",
+            "実測の仕事能力ではありません",
+        )
+    )
+    text = "\n".join([bad, "信頼度：低（評価データ0件）", "実測の仕事能力ではありません"])
+    assert not v.validate(text, facts).passed
+
+
+def test_protected_lines_require_each_allowed_line_exactly_once():
+    facts = v.Facts(
+        percents=[3, 13], allowed_percents=[3, 13],
+        protected_lines=("低下見込み3〜13%", "実測の仕事能力ではありません"),
+    )
+    valid = "低下見込み3〜13%\n実測の仕事能力ではありません\n推定の目安です"
+    assert v.validate(valid, facts).passed
+    assert not v.validate(valid + "\n低下見込み3〜13%", facts).passed

@@ -68,6 +68,7 @@ class Facts:
     required_confidence: str | None = None
     required_feedback_count: int | None = None
     required_phrases: tuple[str, ...] = ()
+    protected_lines: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -212,6 +213,32 @@ def validate(text: str, facts: Facts) -> ValidationResult:
     if not text or not text.strip():
         return ValidationResult(False, "empty")
     normalized_text = normalize(text)
+    lines = [line.strip() for line in normalized_text.splitlines() if line.strip()]
+    segments = [segment.strip() for segment in re.split(r"[。．\n]", normalized_text) if segment.strip()]
+    # 保護行は文字列の一部を探すのではなく、ラベル単位で許可された正規行と
+    # 完全一致させる。したがって保護ラベルを含む自由文（否定・別数値を含む）は
+    # 通過せず、自由に生成できるのは保護ラベルを持たない行だけになる。
+    if facts.protected_lines:
+        def canonical_line(value: str) -> str:
+            value = re.sub(r"\s*←\s*谷\s*$", "", value)
+            return re.sub(r"\s+", "", value.translate(_FULLWIDTH)).rstrip("。．")
+
+        def label_of(value: str) -> str:
+            for label in ("低下見込み", "信頼度", "実測の仕事能力ではありません",
+                          "起床目安", "目標睡眠時間", "目標時刻は過ぎています",
+                          "今から確保できる見込み"):
+                if label in value:
+                    return label
+            return value
+
+        allowed: dict[str, set[str]] = {}
+        for protected_line in facts.protected_lines:
+            allowed.setdefault(label_of(protected_line), set()).add(canonical_line(protected_line))
+        actual = [(label_of(line), canonical_line(line)) for line in lines]
+        for label, permitted in allowed.items():
+            found = [value for actual_label, value in actual if actual_label == label]
+            if len(found) != len(permitted) or any(value not in permitted for value in found):
+                return ValidationResult(False, "protected_line")
     if _INVERTED_RANGE.search(text) or _INVERTED_NOTE.search(text):
         return ValidationResult(False, "semantic_inversion")
     for phrase in facts.required_phrases:

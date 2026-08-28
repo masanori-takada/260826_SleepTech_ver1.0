@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date as date_cls
+from datetime import datetime, timezone
 from datetime import timedelta
 import time
 
@@ -31,6 +32,19 @@ def _pk_idem(slot: str) -> str:
     return f"IDEM#{slot}"
 
 
+def _answered_key(value: str | None) -> datetime | None:
+    """UTCへ正規化してイベント時刻を比較する。旧移行レコードはNone。"""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
 class InMemoryBackend:
     """テスト用の DynamoBackend 互換実装。"""
 
@@ -57,9 +71,15 @@ class InMemoryBackend:
         with self._lock:
             if event_key in self._items:
                 return False
-            self._items[feedback_key] = feedback_value
+            current = self._items.get(feedback_key)
+            current_at = _answered_key(current.get("answered_at")) if current else None
+            incoming_at = _answered_key(feedback_value.get("answered_at"))
+            should_update = (current is None or current_at is None or incoming_at is None
+                             or incoming_at >= current_at)
+            if should_update:
+                self._items[feedback_key] = feedback_value
             self._items[event_key] = {"event_id": event_id, "status": "PROCESSED"}
-            return True
+            return should_update
 
     def put_feedback_event_once(self, event_id: str) -> bool:
         """未紐付け評価イベントを一度だけclaimする。"""

@@ -52,9 +52,9 @@ class StubLlm:
             + next(l for l in user.splitlines() if l.startswith("起床目安:"))
             + "\n" + next(l for l in user.splitlines() if l.startswith("目標睡眠時間:"))
             + late_lines
-            + "\n" + f"明日の主要時間帯は{pct}の見込みです。信頼度：低（評価データ0件）。"
-            "推定の目安です。実測の仕事能力ではありません。"
-            "中途覚醒・HRV・心拍数は現行の%計算には使っていません。"
+            + "\n" + f"明日の主要時間帯の低下見込みは{pct}です。\n信頼度：低（評価データ0件）。\n"
+            "推定の目安です。\n実測の仕事能力ではありません\n"
+            "中途覚醒・HRV・心拍数は現行の%計算には使っていません"
         )
 
 

@@ -99,13 +99,13 @@ def morning_user(curve: list[HourlyDrop], recovery_plan: RecoveryPlan, vital: Da
     if vital.awakenings is not None:
         lines.append(f"中途覚醒: {vital.awakenings}回")
 
-    lines.append("今日の時間帯別の低下見込み:")
+    lines.append("今日の見込み:")
     for i, d in enumerate(curve):
         if ranges is None:
             lines.append(f"  {d.hour}時台: 集中力 -{d.focus_pct}% / 気分 -{d.mood_pct}%")
         else:
             low, high = ranges[i]
-            lines.append(f"  {d.hour}時台: 集中力 {low}〜{high}%")
+            lines.append(f"{d.hour}時台 低下見込み{low}〜{high}%")
     if ranges is not None:
         label = {"low": "低", "medium": "中", "high": "高"}.get(confidence, confidence)
         lines.append(f"信頼度: {label}（評価データ{feedback_count}件）")

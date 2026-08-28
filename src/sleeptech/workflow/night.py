@@ -86,6 +86,13 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
             "目標時刻は過ぎています。今すぐ寝る",
             f"今から確保できる見込み: {hours}時間{minutes:02d}分",
         ])
+    confidence_label = {"low": "低", "medium": "中", "high": "高"}[cal.confidence]
+    protected_lines = [
+        *required_phrases,
+        f"明日の主要時間帯の低下見込みは{range_low}〜{range_high}%です。",
+        f"信頼度：{confidence_label}（評価データ{cal.feedback_count}件）。",
+        *gv.REQUIRED_NOTES,
+    ]
     facts = gv.Facts(
         times=[advice.bedtime_h],
         percents=[range_low, range_high],
@@ -96,6 +103,7 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
         required_notes=gv.REQUIRED_NOTES,
         required_ranges=[(range_low, range_high)],
         required_phrases=tuple(required_phrases),
+        protected_lines=tuple(protected_lines),
     )
     body, used_fallback, regen_count = _compose(
         deps, advice, baseline, debt_h, range_low, range_high,
