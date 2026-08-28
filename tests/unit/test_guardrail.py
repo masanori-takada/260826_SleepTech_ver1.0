@@ -444,3 +444,28 @@ def test_protected_fact_redefinition_is_rejected_on_another_line(extra):
         extra,
     ])
     assert not v.validate(text, facts).passed
+
+
+@pytest.mark.parametrize("extra", ["上記はすべて嘘です", "上の説明は事実ではありません"])
+def test_protected_fact_global_negation_is_rejected(extra):
+    facts = v.Facts(
+        percents=[3, 13], allowed_percents=[3, 13],
+        required_ranges=[(3, 13)], required_confidence="低",
+        required_feedback_count=0, required_notes=_NOTES,
+        protected_lines=("低下見込み3〜13%", "信頼度：低（評価データ0件）", *_NOTES),
+    )
+    text = "\n".join([
+        "低下見込み3〜13%", "信頼度：低（評価データ0件）", *_NOTES,
+        "推定の目安です", extra,
+    ])
+    assert not v.validate(text, facts).passed
+
+
+def test_protected_mode_allows_normal_recovery_prose():
+    facts = v.Facts(percents=[3, 13], allowed_percents=[3, 13],
+                    required_ranges=[(3, 13)], protected_lines=("低下見込み3〜13%",))
+    text = "\n".join([
+        "低下見込み3〜13%", "低下を抑えるため早めに休みましょう",
+        "目標に向けて無理なく休みましょう", "推定の目安です",
+    ])
+    assert v.validate(text, facts).passed

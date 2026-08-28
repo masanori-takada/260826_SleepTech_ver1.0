@@ -49,7 +49,13 @@ _PROTECTED_REDEFINITION = re.compile(
     r"%(?:は|が).*(?:嘘|誤り|間違い)"
 )
 _PROTECTED_CONCEPT = re.compile(
-    r"低下|%|信頼度|実測|仕事能力|目標|起床目安|目標時刻|今から確保"
+    r"(?:実測(?:値|の仕事能力)?\s*(?:です|だ|である)|"
+    r"目標(?:睡眠時間)?\s*(?:は|が|＝|=|:|：)\s*\d+(?:\.\d+)?\s*時間|"
+    r"(?:低下見込み|信頼度|起床目安|目標時刻|今から確保)\s*(?:は|が|を)\s*(?:嘘|誤り|間違い)|"
+    r"%\s*(?:は|が)\s*(?:嘘|誤り|間違い))"
+)
+_GLOBAL_PROTECTED_NEGATION = re.compile(
+    r"(?:上記|上の説明|これら|この説明|上述)[^。\n]*(?:嘘|誤り|間違い|事実ではない|事実でない|事実ではありません)"
 )
 _FULLWIDTH = str.maketrans("０１２３４５６７８９：％－＋−", "0123456789:%-+-")
 
@@ -260,6 +266,8 @@ def validate(text: str, facts: Facts) -> ValidationResult:
             # これにより「実測値です」「目標は5時間」などの別行再定義も防ぐ。
             if canonical_line(line) not in allowed_lines and _PROTECTED_CONCEPT.search(line):
                 return ValidationResult(False, "protected_line")
+        if _GLOBAL_PROTECTED_NEGATION.search(normalized_text):
+            return ValidationResult(False, "semantic_inversion")
     if _INVERTED_RANGE.search(text) or _INVERTED_NOTE.search(text):
         return ValidationResult(False, "semantic_inversion")
     for phrase in facts.required_phrases:

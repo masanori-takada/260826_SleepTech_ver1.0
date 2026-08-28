@@ -226,3 +226,27 @@ def test_feedback_newer_event_retries_after_transaction_conflict(backend):
     stubber.add_response("transact_write_items", {})
     with stubber:
         assert backend.put_feedback_once(incoming, "event-retry") is True
+
+
+def test_feedback_mixed_timezone_uses_numeric_epoch_condition(backend):
+    """旧JST文字列と新UTC文字列を実時刻順で比較する。"""
+    table = boto3.resource("dynamodb", region_name=REGION).Table(TABLE_NAME)
+    legacy = {"date": "2026-08-31", "score": 1,
+              "answered_at": "2026-08-31T23:00:00+09:00"}
+    newer = {"date": "2026-08-31", "score": 5,
+             "answered_at": "2026-08-31T14:10:00.000Z"}
+    # 実デプロイ済み旧項目を再現するため、epoch属性なしで直接投入する。
+    table.put_item(Item={
+        "pk": "FEEDBACK", "sk": "2026-08-31",
+        "json": '{"date": "2026-08-31", "score": 1, "answered_at": "2026-08-31T23:00:00+09:00"}',
+        "answered_at": legacy["answered_at"],
+    })
+    before = table.get_item(Key={"pk": "FEEDBACK", "sk": "2026-08-31"})["Item"]
+    assert "answered_at_epoch_ms" not in before
+    assert backend.put_feedback_once(newer, "event-mixed-zone") is True
+    item = table.get_item(Key={"pk": "FEEDBACK", "sk": "2026-08-31"})["Item"]
+    assert item["answered_at_epoch_ms"] == 1788185400000
+    assert backend.get("FEEDBACK", "2026-08-31")["score"] == 5
+    older = {**newer, "score": 2, "answered_at": "2026-08-31T14:00:00Z"}
+    assert backend.put_feedback_once(older, "event-old-zone") is False
+    assert backend.get("FEEDBACK", "2026-08-31")["score"] == 5

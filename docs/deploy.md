@@ -58,11 +58,14 @@ secret** を開き、**Other type of secrets** を選んで JSON キーと値を
 cd infra
 pip install -r requirements.txt   # 初回のみ（aws-cdk-lib / constructs）
 
-# 初回のみ: このAWSアカウント/リージョンでCDKを使ったことがない場合
-cdk bootstrap
+# 初回のみ: SleepTechの固定デプロイ先（アカウント469683586851 / us-east-1）
+cdk bootstrap aws://469683586851/us-east-1
 
-# 差分確認
-cdk diff
+# 以下のCDKコマンドもデプロイ先を明示する
+export CDK_DEFAULT_REGION=us-east-1
+
+# 差分確認（us-east-1固定は infra/app.py で保証）
+cdk diff SleepTechStack --fail false
 ```
 
 **`cdk diff` の出力に削除（`-` で始まる行、特に既存テーブルや既存Lambdaの削除）が無いことを必ず確認してから `cdk deploy` に進むこと。** このリポジトリでは過去に意図しない削除が事故になったことがある。特に `SleepTechTable`（DynamoDB、`RemovalPolicy.RETAIN` 設定済みだが誤ったスタック名変更などでの再作成に注意）が対象。
@@ -70,7 +73,7 @@ cdk diff
 差分に問題が無ければデプロイする:
 
 ```bash
-cdk deploy
+cdk deploy SleepTechStack --region us-east-1
 ```
 
 デプロイ完了後、出力（Outputs）に `WebhookFunctionUrl` が表示される。Lambda の物理名は

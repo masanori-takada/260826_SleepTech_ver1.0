@@ -21,6 +21,18 @@ from infra.stacks.sleeptech_stack import (  # noqa: E402
 )
 
 
+def test_app_region_is_fixed_to_us_east_1(monkeypatch):
+    """CDK_DEFAULT_REGIONが別リージョンでも移行先と一致する。"""
+    monkeypatch.setenv("CDK_DEFAULT_REGION", "ap-northeast-1")
+    monkeypatch.syspath_prepend(str(Path(REPO_ROOT) / "infra"))
+    module = importlib.import_module("app")
+    assert module.DEPLOY_REGION == "us-east-1"
+    stack = module.app.node.find_child("SleepTechStack")
+    assert stack.region == "us-east-1"
+    assert module.DEPLOY_ACCOUNT == "469683586851"
+    assert stack.account == "469683586851"
+
+
 @pytest.fixture(scope="module")
 def template() -> Template:
     return Template.from_stack(SleepTechStack(App(), "TestStack"))
@@ -387,6 +399,9 @@ def test_deploy_migration_uses_safe_cli_and_powershell_json_patterns():
     assert "削除件数: 0" in migration
     assert '$Region = "us-east-1"' in migration
     assert '$Region = "ap-northeast-1"' not in migration
+    assert "cdk bootstrap aws://469683586851/us-east-1" in deploy_doc
+    assert "export CDK_DEFAULT_REGION=us-east-1" in deploy_doc
+    assert "cdk deploy SleepTechStack --region us-east-1" in deploy_doc
 
 
 def test_synth_asset_contains_no_compiled_python_artifacts():

@@ -75,6 +75,12 @@ class DynamoBackend:
         if pk == "FEEDBACK" and isinstance(value.get("answered_at"), str):
             # 評価時刻は比較・監査用にもトップレベルへ置く。
             item["answered_at"] = value["answered_at"]
+            answered_at = _parse_answered_at(value["answered_at"])
+            if answered_at is not None:
+                # ISO文字列はタイムゾーン表記が混在するため、条件比較用は数値にする。
+                item["answered_at_epoch_ms"] = Decimal(
+                    str(int(answered_at.timestamp() * 1000))
+                )
         if "lease_until" in value:
             # DynamoDB の Table リソースは float を受け付けないため Decimal に変換する
             item["lease_until"] = Decimal(str(value["lease_until"]))
@@ -115,10 +121,13 @@ class DynamoBackend:
             feedback_put = {"Put": {"TableName": self._table.name, "Item": feedback_item}}
             if incoming_at is not None:
                 feedback_put["Put"]["ConditionExpression"] = (
-                    "attribute_not_exists(answered_at) OR answered_at <= :incoming_answered_at"
+                    "attribute_not_exists(answered_at_epoch_ms) "
+                    "OR answered_at_epoch_ms <= :incoming_answered_at_epoch_ms"
                 )
                 feedback_put["Put"]["ExpressionAttributeValues"] = {
-                    ":incoming_answered_at": feedback_value["answered_at"]
+                    ":incoming_answered_at_epoch_ms": Decimal(
+                        str(int(incoming_at.timestamp() * 1000))
+                    )
                 }
             items = ([feedback_put] if should_update else []) + [
                 {"Put": {"TableName": self._table.name, "Item": event_item,
