@@ -164,7 +164,13 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
     # push の例外はここで捕捉せず伝播させる。送信していないのに mark_notified して
     # しまう事故（Lambda 再試行時の二重送信）を防ぐため（夜フローと同じ方針）。
     _push(deps, build_message(body, with_feedback=False), _retry_key(date, SLOT))
-    log.log("morning_sent", fallback=used_fallback)
+    log.log(
+        "morning_sent",
+        fallback=used_fallback,
+        offset=cal.offset_pct,
+        feedback_count=cal.feedback_count,
+        confidence=cal.confidence,
+    )
 
     # push は成功済みなので、ここで失敗扱いにすると再試行で二重送信になる。
     # mark_notified が失敗してもログに残して続行する（夜フローと同じ方針）。

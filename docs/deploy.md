@@ -5,7 +5,7 @@
 推測は含まない（参照元ファイルを各節に明記する）。
 
 対象スタック: `SleepTechStack`（`infra/app.py`）
-Lambda論理名: `NightFn` / `MorningFn` / `WebhookFn`（`infra/stacks/sleeptech_stack.py`）
+Lambda論理名: `NightFn` / `MorningFn` / `WebhookFn` / `BackfillFn`（`infra/stacks/sleeptech_stack.py`）
 
 ---
 
@@ -39,22 +39,11 @@ Secrets の名前と JSON キーは `src/sleeptech/config.py`（既定値）と 
 
 CDK スタック（`infra/stacks/sleeptech_stack.py` の `SECRET_NAMES`）はこの3つの既定名をそのまま Secrets Manager から `from_secret_name_v2` で参照するだけで、Secret 自体は作成しない。**デプロイ前に手動で作成しておく必要がある。**
 
-```bash
-# OpenAI
-aws secretsmanager create-secret \
-  --name sleeptech/openai \
-  --secret-string '{"api_key":"sk-xxxxxxxxxxxxxxxxxxxx"}'
-
-# LINE（channel_access_token / user_id / channel_secret の3キー必須）
-aws secretsmanager create-secret \
-  --name sleeptech/line \
-  --secret-string '{"channel_access_token":"xxxxx","user_id":"Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","channel_secret":"xxxxx"}'
-
-# Google OAuth
-aws secretsmanager create-secret \
-  --name sleeptech/google-oauth \
-  --secret-string '{"client_id":"xxxxx","client_secret":"xxxxx","refresh_token":"xxxxx"}'
-```
+Secret は AWS Console の Secrets Manager から、各 Secret 名を指定して **Store a new
+secret** を開き、**Other type of secrets** を選んで JSON キーと値を画面へ手入力する。
+値は CLI 引数、PowerShell 変数、シェル履歴、ログ、LLM、チャットへ入れない。
+保存後は値を表示せず、Secret 名とキーの存在だけを権限管理された画面で確認する。
+この作業では Secret の値を返す CLI/API を実行しない。
 
 既存の `night-ramen/google-oauth` を引き継ぐ場合も、秘密値を取得・表示・ログしない。
 認証済みの運用担当者が、Secrets Manager の権限管理された画面または既存の安全な
@@ -84,7 +73,19 @@ cdk diff
 cdk deploy
 ```
 
-デプロイ完了後、出力（Outputs）に `WebhookFunctionUrl` が表示される。これと、CloudFormation コンソールまたは `aws cloudformation describe-stacks --stack-name SleepTechStack` から `NightFn` / `MorningFn` / `WebhookFn` の実際の物理Lambda関数名（例: `SleepTechStack-NightFnXXXXXXXX-XXXXXXXXXXXXX`）を控えておく。以降の手順3や実機確認で使う。
+デプロイ完了後、出力（Outputs）に `WebhookFunctionUrl` が表示される。Lambda の物理名は
+次の CloudFormation コマンドで論理IDから取得する。Secret の値は返さない。
+
+```powershell
+foreach ($logicalId in @("NightFn", "MorningFn", "WebhookFn", "BackfillFn")) {
+  aws cloudformation describe-stack-resource `
+    --stack-name SleepTechStack `
+    --logical-resource-id $logicalId `
+    --query "StackResourceDetail.[LogicalResourceId,PhysicalResourceId]" `
+    --output table
+  if ($LASTEXITCODE -ne 0) { throw "物理名の取得に失敗したため停止: $logicalId" }
+}
+```
 
 ---
 
@@ -103,21 +104,21 @@ cdk deploy
 
 実機で OpenAI API から 400/404 が返る場合（`used_fallback: true` かつ CloudWatch Logs に `llm_failed` が出る、手順6参照）は、モデルIDを差し替える。
 
-**即時差し替え（暫定・次回デプロイで元に戻る）:**
+モデルIDを変更する場合は、Lambda の直接設定変更や environment 全置換を行わず、
+`infra/stacks/sleeptech_stack.py` の CDK 環境辞書にある `LLM_MODEL` を変更する。
+モデルID専用の追加環境変数は使用しない。
 
-```bash
-aws lambda update-function-configuration \
-  --function-name <NightFn の物理名> \
-  --environment "Variables={STC_ENV=prod,STC_DDB_TABLE=SleepTechTable,STC_SECRET_GOOGLE=sleeptech/google-oauth,STC_SECRET_LINE=sleeptech/line,STC_SECRET_OPENAI=sleeptech/openai,LLM_MODEL=<正しいモデルID>,PYTHONPATH=/var/task/src}"
-
-# MorningFn / WebhookFn も同様に実行する（3関数とも同じ environment を持つため）
+```powershell
+# infra/stacks/sleeptech_stack.py の値をレビュー済みのモデルIDへ変更してから実行する
+cd infra
+cdk synth --strict
+cdk diff SleepTechStack --fail false
+cdk deploy SleepTechStack --require-approval never
+cd ..
 ```
 
-`update-function-configuration` は environment を丸ごと上書きするため、他のキー（`STC_ENV` 等）も含めて指定すること。上記の値は `infra/stacks/sleeptech_stack.py` の `environment` 辞書と同一。
-
-**恒久化する場合:**
-
-`infra/stacks/sleeptech_stack.py` の以下の行を修正して `cdk deploy` し直す:
+差分で `STC_MIN_TARGET_SLEEP_H`、Secret 参照、`PYTHONPATH` など既存キーが消えていない
+こと、削除・置換がないことを確認してからデプロイする。恒久変更は CDK ソースで管理する。
 
 ```python
 "LLM_MODEL": "gpt-5.6-luna",  # ← 正しいモデルIDに変更
@@ -265,37 +266,179 @@ Webhook（おはよう前倒し）を止めたい場合は Lambda Function URL �
 
 ### 9-1. 更新前の照合
 
-1. `FEEDBACK` を強整合 Query し、更新前件数を記録する。評価履歴件数には冪等
-   marker の `IDEM#FEEDBACK` を含めない。
-2. 次の2件が、スコア・`answered_at`・旧 JSON と完全一致することを確認する。
+次の PowerShell は、対象テーブルとリージョンだけを変数に入れてそのまま実行できる。
+JSON は一時ファイルに書き、PowerShell の quoting と CLI 引数への JSON 直書きを避ける。
+出力は件数・キー・検証結果だけにし、Secret の値は扱わない。
+
+```powershell
+$ErrorActionPreference = "Stop"
+$TableName = "SleepTechTable"
+$Region = "ap-northeast-1"
+$MigrationDir = Join-Path $env:TEMP "sleeptech-feedback-migration"
+New-Item -ItemType Directory -Force -Path $MigrationDir | Out-Null
+
+function Write-Utf8Json {
+  param([string]$Path, [object]$Value, [int]$Depth = 8)
+  $json = $Value | ConvertTo-Json -Compress -Depth $Depth
+  [System.IO.File]::WriteAllText(
+    $Path,
+    $json,
+    [System.Text.UTF8Encoding]::new($false)
+  )
+}
+
+$queryValuesFile = Join-Path $MigrationDir "feedback-query-values.json"
+$queryNamesFile = Join-Path $MigrationDir "feedback-query-names.json"
+Write-Utf8Json $queryValuesFile @{ ":pk" = @{ S = "FEEDBACK" } }
+Write-Utf8Json $queryNamesFile @{ "#json" = "json" }
+
+$query = aws dynamodb query `
+  --region $Region --table-name $TableName --consistent-read `
+  --key-condition-expression "pk = :pk" `
+  --expression-attribute-values "file://$queryValuesFile" `
+  --projection-expression "sk,#json" `
+  --expression-attribute-names "file://$queryNamesFile" `
+  --output json | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw "FEEDBACK Query failed" }
+
+$items = @($query.Items)
+$beforeCount = $items.Count
+Write-Output "更新前 FEEDBACK 件数: $beforeCount"
+
+$expectedDates = @("2026-08-26", "2026-08-27")
+$actualDates = @($items | ForEach-Object { $_.sk.S })
+if ($actualDates.Count -ne 2 -or
+    (($actualDates | Sort-Object) -join ",") -ne (($expectedDates | Sort-Object) -join ",")) {
+  throw "対象が既知の2件と一致しないため停止"
+}
+
+$expectedOldJson = @{
+  "2026-08-26" = '{"date": "2026-08-26", "score": 3, "answered_at": "2026-08-26T23:32:24+09:00"}'
+  "2026-08-27" = '{"date": "2026-08-27", "score": 1, "answered_at": "2026-08-27T23:47:52+09:00"}'
+}
+foreach ($item in $items) {
+  $date = $item.sk.S
+  if ($item.json.S -cne $expectedOldJson[$date]) {
+    throw "旧JSONが承認済みの完全一致値ではないため停止: $date"
+  }
+}
+Write-Output "旧JSON完全一致: 2026-08-26, 2026-08-27"
+```
+
+この Query の件数は冪等 marker の `IDEM#FEEDBACK` を含まない。対象2件以外が存在する
+環境では安全のため停止し、対象を追加して更新しない。
+
+次に、対応する Morning 予測を強整合 BatchGet で確認し、さらに各キーを強整合 GetItem
+でも確認する。
 
    | `date` | `score` | `answered_at` | 対応する `prediction_date` |
    |---|---:|---|---|
    | `2026-08-26` | 3 | `2026-08-26T23:32:24+09:00` | `2026-08-25` |
    | `2026-08-27` | 1 | `2026-08-27T23:47:52+09:00` | `2026-08-26` |
 
-3. 強整合 BatchGet で `PREDICT#MORNING/2026-08-25` と
-   `PREDICT#MORNING/2026-08-26` の存在を確認する。対応する朝予測がない項目は
-   補正対象にせず、削除もしない。
+```powershell
+$batchFile = Join-Path $MigrationDir "morning-batch-get.json"
+Write-Utf8Json $batchFile @{
+  RequestItems = @{
+    $TableName = @{
+      Keys = @(
+        @{ pk = @{ S = "PREDICT#MORNING" }; sk = @{ S = "2026-08-25" } }
+        @{ pk = @{ S = "PREDICT#MORNING" }; sk = @{ S = "2026-08-26" } }
+      )
+      ConsistentRead = $true
+      ProjectionExpression = "pk,sk"
+    }
+  }
+}
+
+$batch = aws dynamodb batch-get-item `
+  --region $Region --request-items "file://$batchFile" --output json | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw "Morning BatchGet failed" }
+$responseProperty = @(
+  $batch.Responses.PSObject.Properties |
+    Where-Object { $_.Name -eq $TableName }
+)
+if ($responseProperty.Count -ne 1) { throw "BatchGetの応答に対象テーブルがないため停止" }
+$batchItems = @($responseProperty[0].Value)
+if ($batchItems.Count -ne 2) { throw "対応 Morning 予測が2件そろわないため停止" }
+Write-Output "対応 Morning BatchGet 件数: $($batchItems.Count)"
+
+foreach ($date in @("2026-08-25", "2026-08-26")) {
+  $keyFile = Join-Path $MigrationDir "morning-$date-key.json"
+  Write-Utf8Json $keyFile @{ pk = @{ S = "PREDICT#MORNING" }; sk = @{ S = $date } } 4
+  $one = aws dynamodb get-item `
+    --region $Region --table-name $TableName --consistent-read `
+    --key "file://$keyFile" --projection-expression "pk,sk" `
+    --output json | ConvertFrom-Json
+  if ($LASTEXITCODE -ne 0 -or $null -eq $one.Item) {
+    throw "対応 Morning 個別 GetItem が見つからないため停止: $date"
+  }
+  Write-Output "対応 Morning 個別 GetItem 確認: $date"
+}
+```
 
 片方でも件数、旧 JSON、スコア、回答時刻、対応予測の存在が一致しなければ停止し、
 再 Query して差異を調査する。確認できていない値を推測して更新しない。
 
 ### 9-2. 条件付き更新
 
-各項目について、確認した旧 JSON を `:old`、次の完全な JSON を `:new` として、
-キーを変えず `UpdateExpression: SET #json = :new`、
-`ConditionExpression: #json = :old` の条件付き更新を1件ずつ行う。
+各項目について、確認した旧 JSON を DynamoDB AttributeValue の `{"S":"..."}` として
+`:old` に入れ、新 JSON も `{"S":"..."}` として `:new` に入れる。キーを変えず
+`UpdateExpression: SET #json = :new`、`ConditionExpression: #json = :old` の
+条件付き UpdateItem を1件ずつ行う。条件不成立を含むコマンド失敗は直ちに停止する。
 
 ```json
 {"date":"2026-08-26","score":3,"answered_at":"2026-08-26T23:32:24+09:00","evaluated_date":"2026-08-26","prediction_date":"2026-08-25"}
 {"date":"2026-08-27","score":1,"answered_at":"2026-08-27T23:47:52+09:00","evaluated_date":"2026-08-27","prediction_date":"2026-08-26"}
 ```
 
+```powershell
+$newJson = @{
+  "2026-08-26" = '{"date":"2026-08-26","score":3,"answered_at":"2026-08-26T23:32:24+09:00","evaluated_date":"2026-08-26","prediction_date":"2026-08-25"}'
+  "2026-08-27" = '{"date":"2026-08-27","score":1,"answered_at":"2026-08-27T23:47:52+09:00","evaluated_date":"2026-08-27","prediction_date":"2026-08-26"}'
+}
+foreach ($date in $expectedDates) {
+  $requestFile = Join-Path $MigrationDir "update-$date.json"
+  Write-Utf8Json $requestFile @{
+    TableName = $TableName
+    Key = @{ pk = @{ S = "FEEDBACK" }; sk = @{ S = $date } }
+    UpdateExpression = "SET #json = :new"
+    ConditionExpression = "#json = :old"
+    ExpressionAttributeNames = @{ "#json" = "json" }
+    ExpressionAttributeValues = @{
+      ":old" = @{ S = $expectedOldJson[$date] }
+      ":new" = @{ S = $newJson[$date] }
+    }
+  }
+  aws dynamodb update-item --region $Region --cli-input-json "file://$requestFile" | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "条件付き更新に失敗したため停止: $date" }
+  Write-Output "条件付き更新成功: $date"
+}
+
+$after = aws dynamodb query `
+  --region $Region --table-name $TableName --consistent-read `
+  --key-condition-expression "pk = :pk" `
+  --expression-attribute-values "file://$queryValuesFile" `
+  --projection-expression "sk,#json" `
+  --expression-attribute-names "file://$queryNamesFile" `
+  --output json | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw "更新後 FEEDBACK Query failed" }
+$afterItems = @($after.Items)
+$afterCount = $afterItems.Count
+if ($afterCount -ne $beforeCount) { throw "更新前後の件数が不一致のため停止" }
+foreach ($item in $afterItems) {
+  if ($item.sk.S -notin $newJson.Keys -or $item.json.S -cne $newJson[$item.sk.S]) {
+    throw "更新後 JSON が期待値と不一致のため停止: $($item.sk.S)"
+  }
+}
+Write-Output "更新後 FEEDBACK 件数: $afterCount"
+Write-Output "削除件数: 0（削除操作なし）"
+```
+
 条件付き更新が1件でも失敗したら、その場で追加更新を止め、再 Query して現在値を
-調査する。更新後に強整合 Query し、`FEEDBACK` 件数が更新前と同じであること、
-削除件数が0であること、2件の `evaluated_date` と `prediction_date` が上表どおりで
-あることを記録する。
+調査する。更新後の強整合 Query で `FEEDBACK` 件数が更新前と同じであること、削除件数が
+0であること、2件の `evaluated_date` と `prediction_date` が上表どおりであることを
+記録する。対応予測がない場合も Feedback は削除せず、補正対象外として残す。
 
 ---
 

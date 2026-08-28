@@ -336,6 +336,7 @@ def test_synth_asset_root_contains_src_and_all_handler_files():
         "OpenAI_API_Key.txt",
     ):
         assert not (asset_root / development_item).exists()
+    assert not list(asset_root.rglob("task-5-report.md"))
 
 
 def test_asset_excludes_all_compiled_python_artifacts():
@@ -343,6 +344,29 @@ def test_asset_excludes_all_compiled_python_artifacts():
     assert "**/*.pyc" in ASSET_EXCLUDES
     assert "**/*.pyo" in ASSET_EXCLUDES
     assert "**/*.pyd" in ASSET_EXCLUDES
+
+
+def test_deploy_migration_uses_safe_cli_and_powershell_json_patterns():
+    """移行手順が秘密取得・全置換を避け、Windows PowerShellで安全に実行できる。"""
+    deploy_doc = (Path(REPO_ROOT) / "docs" / "deploy.md").read_text(encoding="utf-8")
+    migration = deploy_doc.split("## 9. 評価補正の移行", 1)[1].split("## 10.", 1)[0]
+
+    forbidden_commands = (
+        "get" + "-secret-value",
+        "batch-get" + "-secret-value",
+        "update-function" + "-configuration",
+    )
+    assert all(command not in migration for command in forbidden_commands)
+    assert "describe-stack-resource" in deploy_doc
+    assert "BackfillFn" in deploy_doc
+    assert "Set-Content -Encoding UTF8" not in migration
+    assert "UTF8Encoding]::new($false)" in migration
+    assert "PSObject.Properties |" in migration
+    assert "Where-Object { $_.Name -eq $TableName }" in migration
+    assert "ConsistentRead = $true" in migration
+    assert "ConditionExpression = \"#json = :old\"" in migration
+    assert "UpdateExpression = \"SET #json = :new\"" in migration
+    assert "削除件数: 0" in migration
 
 
 def test_synth_asset_contains_no_compiled_python_artifacts():

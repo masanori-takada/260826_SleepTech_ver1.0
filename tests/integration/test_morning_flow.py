@@ -88,6 +88,23 @@ def test_sends_one_message_without_quick_reply():
     assert "quickReply" not in push.sent[0]
 
 
+def test_morning_sent_log_contains_calibration_audit_fields(monkeypatch):
+    """朝送信ログに補正値・利用件数・信頼度を記録する。"""
+    records = []
+
+    class CapturingLogger:
+        def log(self, step, **fields):
+            records.append((step, fields))
+
+    monkeypatch.setattr(morning, "StructuredLogger", CapturingLogger)
+    morning.run_morning(DATE, _deps())
+
+    fields = next(fields for step, fields in records if step == "morning_sent")
+    assert fields["offset"] == 0.0
+    assert fields["feedback_count"] == 0
+    assert fields["confidence"] == "low"
+
+
 def test_second_run_does_not_send_again():
     """冪等: 定時実行と「おはよう」前倒しが重なっても1回だけ。"""
     memory = _memory()

@@ -4403,20 +4403,10 @@ Expected: 全件 PASS。1件でも失敗していればデプロイしない。
 
 - [ ] **Step 2: Secrets を登録する**
 
-Google のトークンは既存 Night Ramen のものをコピーする。
-
-```bash
-aws secretsmanager get-secret-value --secret-id night-ramen/google-oauth --query SecretString --output text > /tmp/g.json
-aws secretsmanager create-secret --name sleeptech/google-oauth --secret-string file:///tmp/g.json
-rm /tmp/g.json
-```
-
-LINE と OpenAI は新規に登録する。値は利用者から受け取ること。
-
-```bash
-aws secretsmanager create-secret --name sleeptech/line --secret-string '{"channel_access_token":"<TOKEN>","user_id":"<USER_ID>","channel_secret":"<CHANNEL_SECRET>"}'
-aws secretsmanager create-secret --name sleeptech/openai --secret-string '{"api_key":"<OPENAI_API_KEY>"}'
-```
+Google、LINE、OpenAI の Secret は AWS Console の Secrets Manager で作成・入力する。
+秘密値をCLI引数、変数、ファイル、ログ、チャットへ出さず、既存Secretの値も取得・表示しない。
+既存Secretを移行する必要がある場合は、権限管理されたConsole操作または `asm-exec` を使い、
+値をこのエージェントへ渡さない。
 
 - [ ] **Step 3: WebhookのLINE署名検証を実装し、テストする**
 
@@ -4473,11 +4463,9 @@ cat /tmp/night.json
 
 `used_fallback` が `true` で、ログに 404 または `model_not_found` が出ている場合、`LLM_MODEL` の値が誤っている。正しい値を確認して差し替える。
 
-```bash
-aws lambda update-function-configuration --function-name <NightFn の物理名> --environment "Variables={LLM_MODEL=<正しいモデルID>,...}"
-```
-
-Task17では署名検証コードの変更を含む。モデルIDについては環境変数の差し替えだけで済むよう設計してある。恒久化するには `infra/stacks/sleeptech_stack.py` の `LLM_MODEL` を書き換えて再デプロイする。
+Lambda の環境変数をCLIで全置換せず、`infra/stacks/sleeptech_stack.py` の `LLM_MODEL` を
+変更して `cdk synth --strict`、`cdk diff`、`cdk deploy` を順に実行する。これにより既存の
+Secret参照やその他の環境変数を保持したまま変更を管理できる。
 
 - [ ] **Step 9: 朝フローを手動実行して確認**
 
