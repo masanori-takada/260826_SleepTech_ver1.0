@@ -115,3 +115,32 @@
 - 変更ファイル: 3（`docs/deploy.md`、`tests/unit/test_infra_synth.py`、本報告書）
 - 追加契約テストアサーション: 8項目
 - AWSデプロイ、DynamoDB本番更新、LINE管理画面操作、実機確認、Sol最終レビューは未実施。
+
+## Fix Round 3/5 対応
+
+### 修正内容
+
+- LINE Official Account ManagerのResponse settingsで**ChatがONの場合**に、Chatの応答方法を
+  確認する手順を追加した。
+- 自動文・自動返信の設定なら、手動応答または自動返信を無効化する設定へ変更する具体手順を
+  追加した。
+- 画面文言がバージョンやアカウント種別で異なる場合も、「ユーザー送信へ汎用返信しない」
+  ことを設定名だけでなくテスト送信で判定する安全条件を明記した。
+- 設定後の実機確認を必須化し、SleepTech返信1回、汎用自動応答0件を必須結果として記載した。
+- 上記のChat条件・導線・実機確認をinfra契約テストで検査するアサーションを追加した。
+
+### RED/GREEN・検証
+
+- Chat条件の契約アサーション追加後、必須文言不足でREDを確認。
+- 文書修正後、対象契約テストは `1 passed` でGREEN。
+- docs検査: 必須文言、旧導線不在、SleepTech 1回／汎用自動応答0件を確認。
+- 全pytest: `532 passed in 99.04s`
+- compileall: `python -m compileall -q src infra` — 成功
+- strict synth: `cd infra; cdk synth --strict` — 成功
+- `git diff --check` — 成功
+
+### 件数・残課題
+
+- 変更ファイル: 3（`docs/deploy.md`、`tests/unit/test_infra_synth.py`、本報告書）
+- 追加契約アサーション: 4項目
+- AWSデプロイ、DynamoDB本番更新、LINE管理画面操作、実機確認、Sol最終レビューは未実施。
