@@ -38,3 +38,43 @@
 - AWS デプロイ、DynamoDB の既存 Feedback 更新、LINE 管理画面操作、実メッセージ送信は実施していない。
 - 本番の `UPDATE_COMPLETE`、Scheduler 状態、DynamoDB 件数・監査値、CloudWatch、LINE 応答は、レビュー後に運用担当者が実施する。
 - Sol 最終レビューは別工程で実施する。
+
+## Fix Round 1/5 引継ぎ対応
+
+### 追加修正
+
+- 物理Lambda名の確認を、4論理ID（`NightFn` / `MorningFn` / `WebhookFn` /
+  `BackfillFn`）ごとの `cloudformation describe-stack-resource` に統一した。
+- 移行用JSONの生成をBOMなしUTF-8の `Write-Utf8Json` に統一し、Windows PowerShellの
+  `Set-Content -Encoding UTF8` によるAWS CLI JSON読込不整合を避けた。
+- BatchGet応答の対象テーブル取得を、Windows PowerShellで動作する
+  `PSObject.Properties` 列挙へ変更した。対象テーブル欠落は停止する。
+- 旧計画書に残っていたSecret値取得・作成CLIとLambda環境変数全置換例を、AWS Console/
+  `asm-exec` またはCDK経由の手順へ置換した。秘密値取得CLIは禁止し、実行していない。
+- 上記の移行手順・禁止操作・PowerShell JSON形式を検査するinfra契約テストを追加した。
+
+### RED/GREEN記録
+
+1. `test_deploy_migration_uses_safe_cli_and_powershell_json_patterns` を追加し、現行文書の
+   `describe-stack-resource` 不在でREDを確認した。
+2. 文書とテストを修正し、同テストが `1 passed` となるGREENを確認した。
+
+### Fix Round 1 fresh検証
+
+- 全pytest: `532 passed in 72.66s`
+- compileall: `python -m compileall -q src infra` — 成功
+- strict synth: `cd infra; cdk synth --strict` — 成功
+- read-only CDK diff: `cd infra; cdk diff SleepTechStack --fail false` — 成功。削除・
+  置換なし。差分はLambdaコード、全ランタイムへの `STC_MIN_TARGET_SLEEP_H`追加、
+  Webhookの `dynamodb:TransactWriteItems` 権限追加のみ。
+- PowerShell検証: `docs/deploy.md` の6ブロックをParserで構文解析 — 成功
+- `git diff --check` — 成功
+
+### 変更件数と残課題
+
+- 変更ファイル: 6（`docs/deploy.md`、旧計画書、朝ワークフロー、朝統合テスト、
+  infraテスト、移動済み報告書）
+- テスト追加: 1件。既存の朝ログ監査テストを含む全532件が成功。
+- AWSデプロイ、DynamoDBの既存Feedback更新、LINE管理画面操作、実メッセージ送信、
+  本番Scheduler/CloudWatch確認、Sol最終レビューは未実施。これらは運用担当者／別工程で
+  実施する。
