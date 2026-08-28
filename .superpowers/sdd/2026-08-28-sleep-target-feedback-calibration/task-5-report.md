@@ -112,7 +112,8 @@
 
 ### 件数・残課題
 
-- 変更ファイル: 3（`docs/deploy.md`、`tests/unit/test_infra_synth.py`、本報告書）
+- 変更ファイル: 2（`tests/unit/test_infra_synth.py`、本報告書）。`docs/deploy.md`はmutation後に
+  完全復元され、Round 4の実質変更はない。
 - 追加契約テストアサーション: 8項目
 - AWSデプロイ、DynamoDB本番更新、LINE管理画面操作、実機確認、Sol最終レビューは未実施。
 
