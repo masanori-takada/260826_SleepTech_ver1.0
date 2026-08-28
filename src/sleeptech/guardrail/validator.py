@@ -42,6 +42,15 @@ REQUIRED_NOTES = (
 _RELATIVE_NOTE = re.compile(r"(?:本人|あなた)の平常時を\s*100%")
 _INVERTED_RANGE = re.compile(r"低下見込み[^。\n]*%\s*(?:ではありません|ではない)")
 _INVERTED_NOTE = re.compile(r"[「『]\s*実測の仕事能力ではありません\s*[」』]\s*は\s*誤り")
+_PROTECTED_REDEFINITION = re.compile(
+    r"(?:実際(?:は|の)|本当(?:は|の)).*(?:実測|目標|起床)|"
+    r"(?:実測(?:値|の仕事能力)|注記|低下見込み|信頼度|目標(?:睡眠時間)?|"
+    r"起床目安|目標時刻|今から確保).*(?:嘘|誤り|間違い|ではなく|ではない|とは限らない)|"
+    r"%(?:は|が).*(?:嘘|誤り|間違い)"
+)
+_PROTECTED_CONCEPT = re.compile(
+    r"低下|%|信頼度|実測|仕事能力|目標|起床目安|目標時刻|今から確保"
+)
 _FULLWIDTH = str.maketrans("０１２３４５６７８９：％－＋−", "0123456789:%-+-")
 
 
@@ -238,6 +247,18 @@ def validate(text: str, facts: Facts) -> ValidationResult:
         for label, permitted in allowed.items():
             found = [value for actual_label, value in actual if actual_label == label]
             if len(found) != len(permitted) or any(value not in permitted for value in found):
+                return ValidationResult(False, "protected_line")
+        # 保護事実をラベルなしの自由行で再定義することも許可しない。
+        # 正規の保護行自体は完全一致済みなので除外する。
+        allowed_lines = {
+            canonical_line(value) for value in facts.protected_lines
+        }
+        for line in lines:
+            if canonical_line(line) not in allowed_lines and _PROTECTED_REDEFINITION.search(line):
+                return ValidationResult(False, "protected_line")
+            # 保護概念を含む行は、保護行の完全一致以外を一切許可しない。
+            # これにより「実測値です」「目標は5時間」などの別行再定義も防ぐ。
+            if canonical_line(line) not in allowed_lines and _PROTECTED_CONCEPT.search(line):
                 return ValidationResult(False, "protected_line")
     if _INVERTED_RANGE.search(text) or _INVERTED_NOTE.search(text):
         return ValidationResult(False, "semantic_inversion")

@@ -722,6 +722,13 @@ def _feedback_webhook_event_with_id(text, reply_token, event_id):
     return _signed_webhook_event(payload["events"])
 
 
+def _feedback_webhook_event_with_timestamp(text, reply_token, event_id, timestamp):
+    event = _feedback_webhook_event_with_id(text, reply_token, event_id)
+    payload = json.loads(event["body"])
+    payload["events"][0]["timestamp"] = timestamp
+    return _signed_webhook_event(payload["events"])
+
+
 def test_feedback_is_saved_and_acknowledged_once(monkeypatch):
     _patch_webhook_dependencies(monkeypatch)
     memory = MemoryClient(InMemoryBackend())
@@ -822,6 +829,47 @@ def test_different_event_id_in_same_day_overwrites_latest_feedback(monkeypatch):
 
     assert memory.get_feedback("2026-08-27").score == 5
     assert memory.get_feedback("2026-08-27").source_event_id == "event-2"
+
+
+def test_handler_uses_event_date_for_delayed_feedback_and_answered_at(monkeypatch):
+    """処理日が翌日でも、LINEイベント日の候補へ評価を保存する。"""
+    _patch_webhook_dependencies(monkeypatch)
+    monkeypatch.setattr(wh.hd, "jst_now", lambda: datetime(2026, 8, 29, 22, tzinfo=JST))
+    memory = MemoryClient(InMemoryBackend())
+    for date in ("2026-08-28", "2026-08-29"):
+        memory.save_message(Message(date=date, slot="NIGHT", delivered=True))
+    for date in ("2026-08-27", "2026-08-28"):
+        memory.save_prediction(Prediction(date=date, slot="MORNING", mean_drop_pct=8))
+    monkeypatch.setattr(wh.hd, "_memory", lambda settings: memory)
+
+    response = wh.handler(_feedback_webhook_event_with_timestamp(
+        "評価:3", "r-delayed", "event-delayed", 1787918400000
+    ))
+
+    assert response["statusCode"] == 200
+    saved = memory.get_feedback("2026-08-28")
+    assert saved.score == 3
+    assert saved.answered_at == "2026-08-28T12:00:00.000Z"
+    assert memory.get_feedback("2026-08-29") is None
+
+
+def test_handler_uses_processing_now_for_invalid_timestamp(monkeypatch):
+    """異常に巨大なtimestampでも500にせず、処理日の候補へ保存する。"""
+    _patch_webhook_dependencies(monkeypatch)
+    monkeypatch.setattr(wh.hd, "jst_now", lambda: datetime(2026, 8, 29, 22, tzinfo=JST))
+    memory = MemoryClient(InMemoryBackend())
+    memory.save_message(Message(date="2026-08-29", slot="NIGHT", delivered=True))
+    memory.save_prediction(Prediction(date="2026-08-28", slot="MORNING", mean_drop_pct=8))
+    monkeypatch.setattr(wh.hd, "_memory", lambda settings: memory)
+
+    response = wh.handler(_feedback_webhook_event_with_timestamp(
+        "評価:4", "r-invalid", "event-invalid", 10**100
+    ))
+
+    assert response["statusCode"] == 200
+    saved = memory.get_feedback("2026-08-29")
+    assert saved.score == 4
+    assert saved.answered_at == "2026-08-29T13:00:00.000Z"
 
 
 def test_same_event_retry_does_not_pollute_previous_feedback_candidate(monkeypatch):

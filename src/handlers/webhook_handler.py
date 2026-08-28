@@ -140,6 +140,27 @@ def is_wakeup_trigger(text: str) -> bool:
     return bool(_WAKEUP_RE.match((text or "").strip()))
 
 
+def _event_timestamp_utc(timestamp_ms: int | None) -> datetime | None:
+    """LINE timestampを安全にUTC日時へ変換する。異常値はNoneにする。"""
+    if not isinstance(timestamp_ms, int) or isinstance(timestamp_ms, bool):
+        return None
+    try:
+        event_at = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    if not 2000 <= event_at.year <= 2100:
+        return None
+    return event_at
+
+
+def event_origin_date(timestamp_ms: int | None, fallback_date: str) -> str:
+    """LINEイベント時刻をJSTの日付へ変換し、異常値は処理日へ安全に戻す。"""
+    event_at = _event_timestamp_utc(timestamp_ms)
+    if event_at is None:
+        return fallback_date
+    return event_at.astimezone(hd.JST).date().isoformat()
+
+
 def resolve_feedback_target(memory, today: str) -> FeedbackTarget | None:
     """当日・前日の夜質問から、前日起点の朝予測を評価対象として返す。"""
     base = date_cls.fromisoformat(today)
@@ -283,15 +304,15 @@ def handler(event, context=None) -> dict:
                 log.log("feedback_duplicate")
                 handled.append("feedback_duplicate")
                 continue
-            target = resolve_feedback_target(memory, hd.origin_date(now))
+            target = resolve_feedback_target(
+                memory,
+                event_origin_date(authorized.event_timestamp_ms, hd.origin_date(now)),
+            )
             if target:
-                answered_at = (
-                    datetime.fromtimestamp(
-                        authorized.event_timestamp_ms / 1000.0, tz=timezone.utc
-                    ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-                    if authorized.event_timestamp_ms is not None
-                    else now.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-                )
+                event_at = _event_timestamp_utc(authorized.event_timestamp_ms)
+                answered_at = (event_at or now.astimezone(timezone.utc)).isoformat(
+                    timespec="milliseconds"
+                ).replace("+00:00", "Z")
                 saved = memory.save_feedback_once(
                     Feedback(
                         date=target.evaluated_date,

@@ -148,6 +148,25 @@ def test_feedback_event_is_detected_as_processed_before_candidate_fallback():
     assert wh.feedback_event_processed(m, "event-1") is True
 
 
+def test_feedback_event_date_uses_line_timestamp_in_jst():
+    """処理が翌日へ遅延してもLINEイベント発生日の候補へ保存する。"""
+    assert wh.event_origin_date(1787918400000, "2026-08-29") == "2026-08-28"
+
+
+def test_feedback_event_date_falls_back_to_processing_date_without_timestamp():
+    assert wh.event_origin_date(None, "2026-08-29") == "2026-08-29"
+
+
+def test_feedback_event_date_handles_utc_jst_boundary():
+    # 2026-08-28 14:59:59Z = 8/28 23:59:59 JST, 15:00:00Z = 8/29 00:00 JST
+    assert wh.event_origin_date(1787929199000, "2026-08-29") == "2026-08-28"
+    assert wh.event_origin_date(1787929200000, "2026-08-29") == "2026-08-29"
+
+
+def test_feedback_event_date_ignores_out_of_range_timestamp():
+    assert wh.event_origin_date(-1, "2026-08-29") == "2026-08-29"
+
+
 # NOTE(出荷前レビュー Minor 対応): 以前ここにあった3件のテスト
 # （test_texts_returns_empty_list_when_body_is_json_array 等）は
 # wh._texts({"body": "..."}) を呼んでいたが、_texts はパース済み payload

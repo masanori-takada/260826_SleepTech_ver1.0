@@ -411,3 +411,36 @@ def test_protected_lines_require_each_allowed_line_exactly_once():
     valid = "低下見込み3〜13%\n実測の仕事能力ではありません\n推定の目安です"
     assert v.validate(valid, facts).passed
     assert not v.validate(valid + "\n低下見込み3〜13%", facts).passed
+
+
+@pytest.mark.parametrize("extra", [
+    "実際は実測値です",
+    "注記は誤りです",
+    "%は嘘です",
+    "実際の目標は5.0時間です",
+])
+def test_protected_fact_redefinition_is_rejected_on_another_line(extra):
+    """保護行を正しく含んでいても、別行の再定義で意味を反転できない。"""
+    facts = v.Facts(
+        protected_lines=(
+            "低下見込み3〜13%",
+            "信頼度：低（評価データ0件）",
+            "実測の仕事能力ではありません",
+            "目標睡眠時間: 7.0時間",
+        ),
+        required_notes=("実測の仕事能力ではありません",),
+        required_ranges=[(3, 13)],
+        required_confidence="低",
+        required_feedback_count=0,
+        percents=[3, 13],
+        allowed_percents=[3, 13],
+    )
+    text = "\n".join([
+        "低下見込み3〜13%",
+        "信頼度：低（評価データ0件）",
+        "実測の仕事能力ではありません",
+        "目標睡眠時間: 7.0時間",
+        "推定の目安です",
+        extra,
+    ])
+    assert not v.validate(text, facts).passed
