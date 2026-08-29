@@ -318,10 +318,10 @@ class RecoveryLlm:
     def _judge_payload(self) -> str:
         import json
 
-        relevance, actionability, time_fit = self.scores
+        relevance, feasibility, timing = self.scores
         return json.dumps({
-            "relevance": relevance, "actionability": actionability,
-            "time_fit": time_fit, "reason": "テスト",
+            "relevance": relevance, "feasibility": feasibility,
+            "timing": timing, "reason": "テスト",
         }, ensure_ascii=False)
 
     def complete(self, system: str, user: str) -> str:
@@ -572,12 +572,12 @@ def test_low_scores_send_the_best_candidate():
     push = FakePushClient()
 
     def judge_next():
-        relevance, actionability, time_fit = next(scores)
+        relevance, feasibility, timing = next(scores)
         import json
 
         return json.dumps({
-            "relevance": relevance, "actionability": actionability,
-            "time_fit": time_fit,
+            "relevance": relevance, "feasibility": feasibility,
+            "timing": timing,
         })
 
     llm._judge_payload = judge_next
@@ -586,7 +586,7 @@ def test_low_scores_send_the_best_candidate():
 
     assert got["judge_status"] == "best_of"
     assert got["used_fallback"] is False
-    assert got["judge_total"] == 67  # (4,3,3) が最高点
+    assert got["judge_total"] == 65  # (4,3,3) が最高点
     assert "今日のリカバリー" in push.sent[0]["text"]
 
 
@@ -648,7 +648,7 @@ def test_judge_scores_are_saved_with_the_message():
 
     msg = memory.get_message(DATE, "MORNING")
     assert msg.judge_total == 80
-    assert msg.judge_scores["relevance"] == 4
+    assert msg.judge_scores["feasibility"] == 4
     assert msg.judge_status == "passed"
     assert memory.get_messages_desc("MORNING", 5)[0].judge_total == 80
 

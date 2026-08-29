@@ -4,7 +4,7 @@ from sleeptech.llm.judge import PASS_SCORE, JudgeScore, parse_scores
 
 
 def _payload(**kwargs) -> str:
-    values = {"relevance": 4, "actionability": 4, "time_fit": 4}
+    values = {"relevance": 4, "feasibility": 4, "timing": 4}
     values.update(kwargs)
     import json
 
@@ -19,16 +19,19 @@ def test_total_is_a_weighted_percentage():
     assert 60 < PASS_SCORE <= 80
 
 
-def test_time_fit_carries_the_most_weight():
-    """時刻の妥当性を最重視する。1点の差が他の軸より大きく効く。"""
+def test_feasibility_carries_the_most_weight():
+    """実行できるかを最重視する。1点の差が他の軸より大きく効く。
+
+    生理的に正しくても勤務中に実行できない提案は価値がゼロになるため。
+    """
     from sleeptech.llm.judge import WEIGHTS
 
-    assert WEIGHTS["time_fit"] == max(WEIGHTS.values())
+    assert WEIGHTS["feasibility"] == max(WEIGHTS.values())
     assert "tone" not in WEIGHTS
     assert sum(WEIGHTS.values()) == 1.0
     base = JudgeScore(3, 3, 3).total
-    assert JudgeScore(3, 3, 4).total - base > JudgeScore(4, 3, 3).total - base
-    assert JudgeScore(3, 3, 4).total - base > JudgeScore(3, 4, 3).total - base
+    assert JudgeScore(3, 4, 3).total - base > JudgeScore(4, 3, 3).total - base
+    assert JudgeScore(3, 4, 3).total - base > JudgeScore(3, 3, 4).total - base
 
 
 def test_any_zero_axis_makes_the_candidate_ineligible():
@@ -45,29 +48,29 @@ def test_parses_plain_json():
 
 
 def test_parses_json_inside_a_code_fence_and_prose():
-    text = "採点しました。\n```json\n" + _payload(time_fit=5) + "\n```\n以上です。"
+    text = "採点しました。\n```json\n" + _payload(timing=5) + "\n```\n以上です。"
 
     score = parse_scores(text)
 
     assert score is not None
-    assert score.time_fit == 5
+    assert score.timing == 5
 
 
 def test_coerces_string_and_float_scores():
-    score = parse_scores('{"relevance":"3","actionability":3.0,"time_fit":3}')
+    score = parse_scores('{"relevance":"3","feasibility":3.0,"timing":3}')
 
     assert score is not None
     assert score.relevance == 3
-    assert score.actionability == 3
+    assert score.feasibility == 3
 
 
 def test_rejects_missing_out_of_range_and_non_json():
-    assert parse_scores('{"relevance":4,"actionability":4}') is None
-    assert parse_scores(_payload(time_fit=6)) is None
+    assert parse_scores('{"relevance":4,"feasibility":4}') is None
+    assert parse_scores(_payload(timing=6)) is None
     assert parse_scores(_payload(relevance=-1)) is None
     assert parse_scores("採点できません") is None
     assert parse_scores("") is None
-    assert parse_scores('{"relevance":3.5,"actionability":4,"time_fit":4}') is None
+    assert parse_scores('{"relevance":3.5,"feasibility":4,"timing":4}') is None
 
 
 def test_reason_is_kept_short():

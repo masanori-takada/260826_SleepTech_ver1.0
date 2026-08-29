@@ -18,7 +18,9 @@ MAX_ATTEMPTS = 3       # 初回 + リトライ2回
 # 700 のままだとプロンプトを厚くした朝フローで推論に食い尽くされ、
 # 本文が空で返って毎回フォールバックしていた。
 MAX_TOKENS = 2000
-ATTEMPT_TIMEOUT_SEC = 8.0
+# 推論モデルは1回の応答に十数秒かかる。8秒では読み取りタイムアウトが続き、
+# 朝フローが毎回テンプレートへ落ちていた。
+ATTEMPT_TIMEOUT_SEC = 20.0
 LINE_RESERVE_SEC = 12.0
 TIMEOUT_SEC = ATTEMPT_TIMEOUT_SEC
 

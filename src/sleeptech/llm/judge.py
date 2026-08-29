@@ -15,13 +15,15 @@ import json
 import re
 
 # 各軸の重み。合計1.0。
-# 文章の調子（tone）は軸から外した。人格否定・恐怖訴求・医学的断定は
+# 文章の調子（tone）は軸に置かない。人格否定・恐怖訴求・医学的断定は
 # guardrail.validator が決定論的に弾いており、judge で二重に見る価値が薄い。
-# 空いた重みは time_fit へ寄せ、「その時刻に行う意味があるか」を最重視する。
+# 最も重いのは feasibility。実機では「15時に仮眠」「朝5:50に屋外光」のように、
+# 生理的には正しくても平日の勤務中には実行できない提案が繰り返し出た。
+# 実行できない提案は、どれだけ理屈が正しくても価値がゼロになる。
 WEIGHTS = {
-    "relevance": 0.35,
-    "actionability": 0.25,
-    "time_fit": 0.40,
+    "relevance": 0.25,
+    "feasibility": 0.40,
+    "timing": 0.35,
 }
 AXES = tuple(WEIGHTS)
 
@@ -37,8 +39,8 @@ class JudgeScore:
     """4軸の整数スコア（0〜5）と短い理由。"""
 
     relevance: int
-    actionability: int
-    time_fit: int
+    feasibility: int
+    timing: int
     reason: str = ""
 
     @property

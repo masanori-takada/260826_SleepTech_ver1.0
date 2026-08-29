@@ -87,20 +87,43 @@ def test_recovery_plan_caffeine_times_are_typed_as_float_list():
     assert typing.get_type_hints(RecoveryPlan)["caffeine_times_h"] == list[float]
 
 
-def test_nap_is_placed_before_the_afternoon_dip_not_the_curve_worst():
-    """仮眠は午後の谷の直前に置く。
+def test_nap_is_only_offered_inside_the_lunch_break():
+    """仮眠は昼休みの中だけ。勤務時間中には置けない。
 
-    睡眠不足の日はカーブ上の最悪時刻が起床直後へ寄るため、それを基準に
-    すると仮眠が谷より後に来る（実機で谷7:20・仮眠9:20が出た）。
+    カーブ上の最悪時刻がどこにあっても昼休みから動かさない。
     """
     plan = recovery.plan(WAKE_H, NEXT_BED_H)
+    day = 24.0
 
     early_dip = recovery.times(WAKE_H, NEXT_BED_H, WAKE_H + 2.0, plan)
     late_dip = recovery.times(WAKE_H, NEXT_BED_H, WAKE_H + 8.0, plan)
 
-    assert early_dip.nap_h == late_dip.nap_h
-    assert early_dip.nap_h <= WAKE_H + C.PHASE_DIP_OFFSET_H
-    assert early_dip.nap_h <= plan.caffeine_cutoff_h
+    assert early_dip.lunch_nap_h == late_dip.lunch_nap_h
+    assert day + C.LUNCH_START_H <= early_dip.lunch_nap_h <= day + C.LUNCH_END_H
+
+
+def test_daytime_actions_sit_inside_working_hours():
+    """勤務中に提案する時刻は始業から退勤の間に収める。"""
+    plan = recovery.plan(WAKE_H, NEXT_BED_H)
+    day = 24.0
+
+    times = recovery.times(WAKE_H, NEXT_BED_H, WAKE_H + 8.0, plan)
+
+    assert day + C.WORK_START_H <= times.focus_block_h
+    assert day + C.WORK_START_H <= times.desk_break_h <= day + C.LEAVE_OFFICE_H
+    assert times.commute_light_h <= day + C.WORK_START_H
+    assert times.exercise_h >= day + C.LEAVE_OFFICE_H
+    assert times.dinner_h == day + C.DINNER_H
+
+
+def test_caffeine_is_offered_at_most_once():
+    """コーヒーは1日1回まで。"""
+    plan = recovery.plan(WAKE_H, NEXT_BED_H)
+
+    times = recovery.times(WAKE_H, NEXT_BED_H, WAKE_H + 8.0, plan)
+
+    assert len(times.caffeine_times_h) <= 1
+    assert all(value <= times.caffeine_cutoff_h for value in times.caffeine_times_h)
 
 
 def test_recovery_times_sit_on_a_five_minute_grid():

@@ -71,3 +71,17 @@ MEAL_BEFORE_BED_H = 3.0         # 夕食は就寝の何時間前までに終え�
 BATH_BEFORE_BED_H = 1.5         # 入浴は就寝の何時間前に終えるか
 WINDDOWN_BEFORE_BED_H = 1.0     # 活動を落とし始めるのは就寝の何時間前か
 
+# 平日の生活スケジュール（利用者の実際の1日。変わったらここだけ直す）。
+# リカバリーの時刻はこれに合わせる。勤務中に仮眠やジムは提案できない。
+WORK_START_H = 9.0        # 始業
+LUNCH_START_H = 12.0      # 昼休み開始
+LUNCH_END_H = 13.0        # 昼休み終了
+WORK_END_H = 17.5         # 定時
+LEAVE_OFFICE_H = 19.0     # おおむねの退勤
+DINNER_H = 20.75          # 家族との夕食
+COMMUTE_LIGHT_BEFORE_WORK_H = 0.5   # 通勤で外光を浴びられるのは始業の何時間前か
+LUNCH_NAP_AFTER_START_H = 0.5       # 昼休みのどこで目を閉じるか
+EXERCISE_AFTER_LEAVE_H = 0.5        # まとまった運動は退勤の何時間後か
+DESK_BREAK_BEFORE_DIP_H = 0.5       # 席でできる小休憩は谷の何時間前か
+
+

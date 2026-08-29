@@ -89,15 +89,17 @@ class SleepTechStack(Stack):
             "PYTHONPATH": "/var/task/src",
         }
 
+        # 夜も推論モデルの応答待ちを見込んで既定の60秒より長くする。
         night_fn = self._function(
-            "NightFn", "src.handlers.night_handler.handler", environment
+            "NightFn", "src.handlers.night_handler.handler", environment,
+            timeout=Duration.seconds(120),
         )
         # 朝は「リカバリー生成 → LLM-as-Judge 採点」を最大3ラウンド回すため、
         # 既定の60秒では ExecutionDeadline が常に打ち切り側へ倒れる。
         # Lambda は実行時間課金なので、上限を上げても使わなければ費用は増えない。
         morning_fn = self._function(
             "MorningFn", "src.handlers.morning_handler.handler", environment,
-            timeout=Duration.seconds(120),
+            timeout=Duration.seconds(180),
         )
         webhook_fn = self._function(
             "WebhookFn", "src.handlers.webhook_handler.handler", environment

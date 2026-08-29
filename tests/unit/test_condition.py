@@ -485,10 +485,10 @@ def test_fallback_template_is_not_reused_for_another_time():
     """
     report, _, _, times = _case(316, 78.0, 24)
     targets = recovery_targets(report)
-    now_h = times.light_morning_h + 0.5  # 朝の光の期限を過ぎた時点
+    now_h = times.commute_light_h + 0.5  # 通勤で光を浴びる時間帯を過ぎた時点
 
     section = render_recovery_section(targets, times, now_h)
 
-    assert "外の光" not in section or _hm(times.light_morning_h) in section
+    assert "日なた" not in section or _hm(times.commute_light_h) in section
     for line in section.splitlines()[1:]:
         assert line.count("：") == 1

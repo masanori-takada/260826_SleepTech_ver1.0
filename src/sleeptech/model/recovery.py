@@ -57,23 +57,30 @@ def _round_5min(t_h: float) -> float:
 class RecoveryTimes:
     """リカバリー提案で使ってよい時刻のメニュー。
 
-    領域ごとに「何時に」を書けるようにするための材料であり、
-    カフェイン・光の生理モデル出力（RecoveryPlan）とは責務を分ける。
+    平日の勤務スケジュール（始業・昼休み・退勤・夕食）に沿った時刻だけを
+    載せる。生理モデルが最適と言う時刻でも、勤務中に実行できないものは
+    提案の材料にしない。
     """
 
     wake_h: float
-    focus_block_h: float
-    dip_h: float
-    nap_h: float
+    commute_light_h: float   # 通勤で外光を浴びる
+    focus_block_h: float     # 集中して作業できる時間帯の開始
     caffeine_times_h: tuple[float, ...]
+    lunch_nap_h: float       # 昼休みに目を閉じる
+    desk_break_h: float      # 席でできる小休憩
+    dip_h: float             # 集中力の谷
     caffeine_cutoff_h: float
-    light_morning_h: float
-    exercise_h: float
-    dinner_h: float
+    exercise_h: float        # 退勤後のまとまった運動
+    dinner_h: float          # 家族との夕食
+    light_avoid_after_h: float
     bath_h: float
     winddown_h: float
-    light_avoid_after_h: float
     bedtime_h: float
+
+
+def _day_base(wake_h: float) -> float:
+    """起床時刻が属する日の 0:00（起点日 0:00 からの経過時間）。"""
+    return 24.0 * math.floor(wake_h / 24.0)
 
 
 def times(
@@ -82,33 +89,44 @@ def times(
     dip_h: float,
     plan: RecoveryPlan,
 ) -> RecoveryTimes:
-    """起床・就寝目標・集中力の谷から、提案に使える時刻を揃える。
+    """起床・就寝目標・集中力の谷と勤務スケジュールから、使える時刻を揃える。
 
-    dip_h は予測カーブが示した実際の谷であり、定数の午後の谷では代用しない
+    dip_h は予測カーブが示した実際の谷。定数の午後の谷では代用しない
     （起床時刻が動くと谷も動くため）。
     """
-    # 仮眠は「午後の谷」の直前に置く。カーブ上の最悪時刻（dip_h）は睡眠不足の
-    # 日に起床直後へ寄るため、それを基準にすると仮眠が谷より後に来て矛盾する。
-    nap = min(
-        wake_h + C.PHASE_DIP_OFFSET_H - C.NAP_BEFORE_DIP_H,
-        plan.caffeine_cutoff_h,
+    day = _day_base(wake_h)
+    # 外光は通勤時に浴びる。起床直後の屋外はそもそも家にいて実行しにくい。
+    commute_light = max(
+        wake_h + 0.25, day + C.WORK_START_H - C.COMMUTE_LIGHT_BEFORE_WORK_H
     )
-    exercise = max(
-        next_bedtime_h - C.EXERCISE_BEFORE_BED_H,
-        wake_h + C.EXERCISE_EARLIEST_OFFSET_H,
+    # 仮眠は昼休みの中だけ。勤務時間中には置けない。
+    lunch_nap = day + C.LUNCH_START_H + C.LUNCH_NAP_AFTER_START_H
+    # 谷の直前の小休憩は席でできる範囲。勤務時間内に収める。
+    desk_break = min(
+        max(dip_h - C.DESK_BREAK_BEFORE_DIP_H, day + C.WORK_START_H),
+        day + C.LEAVE_OFFICE_H,
     )
+    # カフェインは1日1回まで。始業後の立ち上がりに寄せ、遮断時刻は超えない。
+    first_caffeine = (
+        plan.caffeine_times_h[0] if plan.caffeine_times_h else day + C.WORK_START_H
+    )
+    caffeine = max(first_caffeine, day + C.WORK_START_H)
+    caffeine_times = (caffeine,) if caffeine <= plan.caffeine_cutoff_h else ()
     return RecoveryTimes(
         wake_h=_round_5min(wake_h),
-        focus_block_h=_round_5min(wake_h + C.FOCUS_BLOCK_OFFSET_H),
+        commute_light_h=_round_5min(commute_light),
+        focus_block_h=_round_5min(
+            max(wake_h + C.FOCUS_BLOCK_OFFSET_H, day + C.WORK_START_H)
+        ),
+        caffeine_times_h=tuple(_round_5min(value) for value in caffeine_times),
+        lunch_nap_h=_round_5min(lunch_nap),
+        desk_break_h=_round_5min(desk_break),
         dip_h=_round_5min(dip_h),
-        nap_h=_round_5min(nap),
-        caffeine_times_h=tuple(_round_5min(value) for value in plan.caffeine_times_h),
         caffeine_cutoff_h=_round_5min(plan.caffeine_cutoff_h),
-        light_morning_h=_round_5min(plan.light_morning_h),
-        exercise_h=_round_5min(exercise),
-        dinner_h=_round_5min(next_bedtime_h - C.MEAL_BEFORE_BED_H),
+        exercise_h=_round_5min(day + C.LEAVE_OFFICE_H + C.EXERCISE_AFTER_LEAVE_H),
+        dinner_h=_round_5min(day + C.DINNER_H),
+        light_avoid_after_h=_round_5min(plan.light_avoid_after_h),
         bath_h=_round_5min(next_bedtime_h - C.BATH_BEFORE_BED_H),
         winddown_h=_round_5min(next_bedtime_h - C.WINDDOWN_BEFORE_BED_H),
-        light_avoid_after_h=_round_5min(plan.light_avoid_after_h),
         bedtime_h=_round_5min(next_bedtime_h),
     )

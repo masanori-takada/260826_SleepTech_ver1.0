@@ -40,39 +40,43 @@ def level_stars(level: str) -> str:
 # 材料に載せる時刻の意味。フィールド名 → 表示ラベル。
 _TIME_MEANINGS = {
     "wake_h": "起床 ",
-    "focus_block_h": "重要作業に向く ",
+    "commute_light_h": "通勤で外光を浴びる ",
+    "focus_block_h": "集中して作業できる ",
+    "caffeine_times_h": "コーヒーを飲むなら ",
+    "lunch_nap_h": "昼休みに目を閉じる ",
+    "desk_break_h": "席でできる小休憩 ",
     "dip_h": "集中力の谷 ",
-    "nap_h": "仮眠に向く ",
-    "caffeine_times_h": "カフェインを入れるなら ",
     "caffeine_cutoff_h": "カフェインを避け始める ",
-    "light_morning_h": "屋外光の期限 ",
-    "exercise_h": "運動に向く ",
-    "dinner_h": "夕食を終える目安 ",
+    "exercise_h": "退勤後に体を動かす ",
+    "dinner_h": "家族との夕食 ",
+    "light_avoid_after_h": "強い光を避け始める ",
     "bath_h": "入浴を終える目安 ",
     "winddown_h": "活動を落とす ",
-    "light_avoid_after_h": "強い光を避け始める ",
     "bedtime_h": "今夜の就寝目標 ",
 }
 
 # 領域 → (使ってよい時刻のフィールド, 決定論フォールバックの候補)。
 # 候補は (必要な時刻, 文面) の並びで、必要な時刻が全部使える最初のものを採る。
-# 材料・構造検査・フォールバックはすべてこの表を参照する。
+# 文面は平日の勤務中でも実行できる粒度に限る（席でできる動作、コーヒー1杯、
+# 昼休みの仮眠、退勤後の散歩など）。材料・構造検査・フォールバックは
+# すべてこの表を参照する。
 _RECOVERY_MENU: dict[str, tuple[tuple[str, ...], tuple[tuple[tuple[str, ...], str], ...]]] = {
     "focus": (
-        ("focus_block_h", "dip_h", "nap_h"),
+        ("focus_block_h", "desk_break_h", "dip_h"),
         (
             (("focus_block_h", "dip_h"),
              "{focus_block_h}から重要な作業に取りかかり、{dip_h}前後は手を動かす作業に回す"),
             (("focus_block_h",), "{focus_block_h}から重要な作業を1件だけ片づける"),
-            (("nap_h",), "{nap_h}に15分だけ目を閉じて集中を戻す"),
+            (("desk_break_h",), "{desk_break_h}に席で肩甲骨を10回まわす"),
             (("dip_h",), "{dip_h}前後は判断の重い作業を入れない"),
         ),
     ),
     "sleepiness": (
-        ("nap_h", "caffeine_times_h", "caffeine_cutoff_h"),
+        ("lunch_nap_h", "caffeine_times_h", "desk_break_h", "caffeine_cutoff_h"),
         (
-            (("nap_h",), "{nap_h}に15〜20分だけ目を閉じて横になる"),
-            (("caffeine_times_h",), "{caffeine_times_h}にコーヒーを1杯だけ入れる"),
+            (("lunch_nap_h",), "{lunch_nap_h}に15分だけ目を閉じる"),
+            (("caffeine_times_h",), "{caffeine_times_h}にコーヒーを1杯だけ飲む"),
+            (("desk_break_h",), "{desk_break_h}に立ってスクワットを10回する"),
             (("caffeine_cutoff_h",), "{caffeine_cutoff_h}以降はカフェインを取らない"),
         ),
     ),
@@ -88,35 +92,37 @@ _RECOVERY_MENU: dict[str, tuple[tuple[str, ...], tuple[tuple[tuple[str, ...], st
         ),
     ),
     "autonomic": (
-        ("winddown_h", "dinner_h", "exercise_h"),
+        ("desk_break_h", "winddown_h", "dinner_h"),
         (
-            (("winddown_h",),
-             "{winddown_h}から画面を閉じ、息を長く吐く呼吸を10回する"),
-            (("dinner_h",), "{dinner_h}までに夕食を終える"),
-            (("exercise_h",), "{exercise_h}の運動は軽い散歩までにする"),
+            (("desk_break_h",),
+             "{desk_break_h}に席で4秒吸って8秒吐く呼吸を5回する"),
+            (("winddown_h",), "{winddown_h}から画面を閉じ、深呼吸を10回する"),
+            (("dinner_h",), "{dinner_h}の夕食は腹八分で終える"),
         ),
     ),
     "mood": (
-        ("light_morning_h", "exercise_h", "winddown_h"),
+        ("commute_light_h", "desk_break_h", "exercise_h", "winddown_h"),
         (
-            (("light_morning_h",), "{light_morning_h}までに外の光を10分浴びる"),
+            (("commute_light_h",), "{commute_light_h}の通勤で日なたを10分歩く"),
             (("exercise_h",), "{exercise_h}に20分歩いて気分を切り替える"),
+            (("desk_break_h",), "{desk_break_h}に席を立って深呼吸を5回する"),
             (("winddown_h",), "{winddown_h}から画面を閉じて頭を休める"),
         ),
     ),
     "physical_load": (
-        ("exercise_h", "bath_h"),
+        ("desk_break_h", "exercise_h", "bath_h"),
         (
             (("exercise_h", "bath_h"),
              "{exercise_h}の運動は軽い散歩までにして、{bath_h}に湯船で脚をほぐす"),
             (("exercise_h",), "{exercise_h}の運動は軽い散歩までにする"),
             (("bath_h",), "{bath_h}に湯船で脚を10分ほぐす"),
+            (("desk_break_h",), "{desk_break_h}に席でふくらはぎを30秒伸ばす"),
         ),
     ),
     "body_composition": (
         ("dinner_h", "exercise_h"),
         (
-            (("dinner_h",), "{dinner_h}までに夕食を終える"),
+            (("dinner_h",), "{dinner_h}の夕食は主食を控えめにする"),
             (("exercise_h",), "{exercise_h}に20分歩く"),
         ),
     ),
