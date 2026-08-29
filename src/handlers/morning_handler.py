@@ -1,4 +1,4 @@
-"""朝 Lambda（EventBridge Scheduler 8:00 JST 起動）。
+"""朝 Lambda（EventBridge Scheduler 9:30 JST 起動）。
 
 起点日は前日である点に注意（前夜の夜メッセージと同じ日付を使う）。
 送信の冪等は run_morning が内部で担保するため、ここでは判定しない。
@@ -30,8 +30,8 @@ from src.handlers import deps as hd
 
 # 朝フローのcron予定時刻（JST）。scheduled_timeのローカル誤ラベル判定に使う
 # （hd.resolve_scheduled_time参照）。
-MORNING_CRON_HOUR_JST = 8
-MORNING_CRON_MINUTE_JST = 0
+MORNING_CRON_HOUR_JST = 9
+MORNING_CRON_MINUTE_JST = 30
 
 
 def _bad_request(message: str) -> dict:

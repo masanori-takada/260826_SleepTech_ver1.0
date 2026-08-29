@@ -226,9 +226,9 @@ def _patch_morning_dependencies(monkeypatch):
 def test_morning_handler_derives_date_from_scheduled_time(monkeypatch):
     """最終レビュー対応（優先2）: scheduled_time から起点日を導く（前日日付）。"""
     calls = _patch_morning_dependencies(monkeypatch)
-    monkeypatch.setattr(mh.hd, "jst_now", lambda: datetime(2026, 8, 27, 8, 1, tzinfo=JST))
+    monkeypatch.setattr(mh.hd, "jst_now", lambda: datetime(2026, 8, 27, 9, 31, tzinfo=JST))
 
-    result = mh.handler({"scheduled_time": "2026-08-26T23:00:00Z"})  # = 08-27 08:00 JST
+    result = mh.handler({"scheduled_time": "2026-08-27T00:30:00Z"})  # = 08-27 09:30 JST
 
     assert result == {"ok": True}
     assert calls == [("2026-08-26", "deps")]
@@ -247,7 +247,7 @@ def test_morning_handler_survives_overnight_retry_using_scheduled_time(monkeypat
         lambda: datetime(2026, 8, 27, 0, 30, tzinfo=JST),  # 日跨ぎ長時間リトライ後
     )
 
-    result = mh.handler({"scheduled_time": "2026-08-26T23:00:00Z"})  # = 08-27 08:00 JST
+    result = mh.handler({"scheduled_time": "2026-08-27T00:30:00Z"})  # = 08-27 09:30 JST
 
     assert result == {"ok": True}
     assert calls == [("2026-08-26", "deps")]
@@ -256,17 +256,17 @@ def test_morning_handler_survives_overnight_retry_using_scheduled_time(monkeypat
 def test_morning_handler_falls_back_to_wall_clock_when_scheduled_time_looks_locally_labeled(monkeypatch):
     """scheduled_time がローカル時刻に誤ってZ(UTC)を付けて返ってきたケース。"""
     calls = _patch_morning_dependencies(monkeypatch)
-    monkeypatch.setattr(mh.hd, "jst_now", lambda: datetime(2026, 8, 27, 8, 1, tzinfo=JST))
+    monkeypatch.setattr(mh.hd, "jst_now", lambda: datetime(2026, 8, 28, 9, 31, tzinfo=JST))
 
-    result = mh.handler({"scheduled_time": "2026-08-27T08:00:00Z"})  # 数字がそのままJST8:00と一致
+    result = mh.handler({"scheduled_time": "2026-08-27T09:30:00Z"})  # 数字がそのままJST9:30と一致
 
     assert result == {"ok": True}
-    assert calls == [("2026-08-26", "deps")]
+    assert calls == [("2026-08-27", "deps")]
 
 
 def test_morning_handler_uses_wall_clock_for_manual_fallback(monkeypatch):
     calls = _patch_morning_dependencies(monkeypatch)
-    monkeypatch.setattr(mh.hd, "jst_now", lambda: datetime(2026, 8, 27, 8, 0, tzinfo=JST))
+    monkeypatch.setattr(mh.hd, "jst_now", lambda: datetime(2026, 8, 27, 9, 30, tzinfo=JST))
 
     mh.handler({})
 

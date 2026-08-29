@@ -89,7 +89,7 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
     confidence_label = {"low": "低", "medium": "中", "high": "高"}[cal.confidence]
     protected_lines = [
         *required_phrases,
-        f"明日の主要時間帯の低下見込みは{range_low}〜{range_high}%です。",
+        f"明日の主要時間帯の低下見込み: {range_low}〜{range_high}%",
         f"信頼度：{confidence_label}（評価データ{cal.feedback_count}件）。",
         *gv.REQUIRED_NOTES,
     ]

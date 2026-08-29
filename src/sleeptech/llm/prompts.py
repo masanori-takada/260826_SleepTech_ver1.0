@@ -80,6 +80,7 @@ def night_user(advice: BedtimeAdvice, baseline: Baseline, debt_h: float,
         lines.append("注意: 履歴が少なく精度が低いことを一言添えること")
     if range_low is not None and range_high is not None:
         lines.extend([
+            "※睡眠モデルと主観評価による推定の目安（範囲）です",
             "実測の仕事能力ではありません",
             "中途覚醒・HRV・心拍数は現行の%計算には使っていません",
         ])

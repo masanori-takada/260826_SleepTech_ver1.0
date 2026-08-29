@@ -40,7 +40,7 @@ class StubLlm:
         if self.template is not None:
             return self.template
         time_s = next(l.split(": ")[1] for l in user.splitlines() if l.startswith("推奨就寝時刻"))
-        pct = next(l.split(": ")[1] for l in user.splitlines() if l.startswith("明日の主要"))
+        range_line = next(l for l in user.splitlines() if l.startswith("明日の主要"))
         late_lines = ""
         if any(l.startswith("目標時刻は過ぎています。") for l in user.splitlines()):
             late_lines = "\n" + "\n".join(
@@ -52,10 +52,31 @@ class StubLlm:
             + next(l for l in user.splitlines() if l.startswith("起床目安:"))
             + "\n" + next(l for l in user.splitlines() if l.startswith("目標睡眠時間:"))
             + late_lines
-            + "\n" + f"明日の主要時間帯の低下見込みは{pct}です。\n信頼度：低（評価データ0件）。\n"
+            + "\n" + range_line + "\n信頼度：低（評価データ0件）。\n"
             "推定の目安です。\n実測の仕事能力ではありません\n"
             "中途覚醒・HRV・心拍数は現行の%計算には使っていません"
         )
+
+
+class PromptProtectedLineEchoLlm:
+    """プロンプト内の保護行を変換せず、そのまま返すLLM。"""
+
+    def __init__(self) -> None:
+        self.calls = []
+
+    def complete(self, system: str, user: str) -> str:
+        self.calls.append((system, user))
+        prefixes = (
+            "推奨就寝時刻:",
+            "起床目安:",
+            "目標睡眠時間:",
+            "明日の主要時間帯の低下見込み:",
+            "信頼度:",
+            "※睡眠モデルと主観評価による推定の目安",
+            "実測の仕事能力ではありません",
+            "中途覚醒・HRV・心拍数は現行の%計算には使っていません",
+        )
+        return "\n".join(line for line in user.splitlines() if line.startswith(prefixes))
 
 
 def _memory(days: int = 14) -> MemoryClient:
@@ -202,6 +223,16 @@ def test_falls_back_when_llm_output_fails_guardrail():
     result = night.run_night(DATE, NOW_H, _deps(llm=bad, push=push))
     assert result["used_fallback"] is True
     assert len(bad.calls) == 3  # 初回 + 再生成2回
+
+
+def test_prompt_protected_lines_are_accepted_without_stub_rewriting():
+    """プロンプトの保護行をLLMがそのまま返しても夜フローを通過させる。"""
+    push = FakePushClient()
+    llm = PromptProtectedLineEchoLlm()
+    result = night.run_night(DATE, NOW_H, _deps(llm=llm, push=push))
+
+    assert result["used_fallback"] is False
+    assert len(llm.calls) == 1
 
 
 def test_message_contains_the_recommended_time():

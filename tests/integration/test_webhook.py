@@ -31,8 +31,8 @@ def test_origin_date_at_night_is_today():
 
 
 def test_origin_date_in_the_morning_is_yesterday():
-    """8:00 の起点日は前日（前夜のメッセージと同じ日付にするため）。"""
-    now = datetime(2026, 8, 27, 8, 0, tzinfo=JST)
+    """9:30 の起点日は前日（前夜のメッセージと同じ日付にするため）。"""
+    now = datetime(2026, 8, 27, 9, 30, tzinfo=JST)
     assert hd.origin_date(now, morning=True) == "2026-08-26"
 
 
@@ -76,16 +76,16 @@ def test_night_origin_date_across_month_boundary():
 
 
 def test_night_and_morning_use_same_date_normal_case():
-    """回帰: 8/26 22:30 の夜と 8/27 8:00 の朝が同じ date を使う。"""
+    """回帰: 8/26 22:30 の夜と 8/27 9:30 の朝が同じ date を使う。"""
     night_now = datetime(2026, 8, 26, 22, 30, tzinfo=JST)
-    morning_now = datetime(2026, 8, 27, 8, 0, tzinfo=JST)
+    morning_now = datetime(2026, 8, 27, 9, 30, tzinfo=JST)
     assert hd.origin_date(night_now, night=True) == hd.origin_date(morning_now, morning=True) == "2026-08-26"
 
 
 def test_night_and_morning_use_same_date_when_night_rolls_over_midnight():
-    """回帰: 深夜にずれ込んだ夜（8/27 0:30）でも朝（8/27 8:00）と同じ date になる。"""
+    """回帰: 深夜にずれ込んだ夜（8/27 0:30）でも朝（8/27 9:30）と同じ date になる。"""
     night_now = datetime(2026, 8, 27, 0, 30, tzinfo=JST)
-    morning_now = datetime(2026, 8, 27, 8, 0, tzinfo=JST)
+    morning_now = datetime(2026, 8, 27, 9, 30, tzinfo=JST)
     assert hd.origin_date(night_now, night=True) == hd.origin_date(morning_now, morning=True) == "2026-08-26"
 
 

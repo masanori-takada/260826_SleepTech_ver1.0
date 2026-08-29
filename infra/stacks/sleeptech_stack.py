@@ -138,7 +138,7 @@ class SleepTechStack(Stack):
         )
         self._schedule(
             "MorningSchedule",
-            "cron(0 8 * * ? *)",
+            "cron(30 9 * * ? *)",
             morning_fn,
             input_value=scheduled_time_input,
         )

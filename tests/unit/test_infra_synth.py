@@ -62,7 +62,7 @@ def test_each_schedule_has_the_expected_expression(template):
     expressions = {
         resource["Properties"]["ScheduleExpression"] for resource in resources.values()
     }
-    assert expressions == {"cron(30 22 * * ? *)", "cron(0 8 * * ? *)"}
+    assert expressions == {"cron(30 22 * * ? *)", "cron(30 9 * * ? *)"}
 
 
 def test_table_uses_lowercase_pk_sk(template):
@@ -131,7 +131,7 @@ def test_morning_schedule_also_has_scheduled_time_input(template):
     morning = next(
         resource
         for resource in resources.values()
-        if resource["Properties"]["ScheduleExpression"] == "cron(0 8 * * ? *)"
+        if resource["Properties"]["ScheduleExpression"] == "cron(30 9 * * ? *)"
     )
     assert morning["Properties"]["Target"]["Input"] == (
         '{"scheduled_time":"<aws.scheduler.scheduled-time>"}'
