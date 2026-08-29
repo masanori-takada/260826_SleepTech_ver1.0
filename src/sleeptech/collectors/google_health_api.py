@@ -29,13 +29,13 @@ BASE_URL = "https://health.googleapis.com/v4"
 # --- dailyRollUp 系（POST）: field -> (型ID, camelキー, 値フィールド, キャスト, スケール) ---
 # スケール: APIが返す単位からストア単位への変換係数（通常1.0、体重のみグラム→kg で0.001）
 _ROLLUP_MAP: dict[str, tuple[str, str, str, type, float]] = {
-    "daily_avg_hr": ("heart-rate", "heartRate", "beatsPerMinuteAvg", float, 1.0),
     "weight_kg": ("weight", "weight", "weightGramsAvg", float, 0.001),      # API単位=グラム
     "body_fat_pct": ("body-fat", "bodyFat", "bodyFatPercentageAvg", float, 1.0),
 }
 
 # 朝9:30時点の当日値は未確定なので、活動負荷には確定済みの前日値だけを使う。
 _PRIOR_DAY_ROLLUP_MAP: dict[str, tuple[str, str, str, type, float]] = {
+    "prior_day_avg_hr": ("heart-rate", "heartRate", "beatsPerMinuteAvg", float, 1.0),
     "prior_day_steps": ("steps", "steps", "countTotal", int, 1.0),
     "prior_day_active_calories": (
         "active-energy-burned", "activeEnergyBurned", "energyKilocaloriesTotal", float, 1.0

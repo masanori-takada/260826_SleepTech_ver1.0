@@ -253,7 +253,7 @@ def test_fetch_raw_skips_all_requests_when_deadline_already_exhausted():
     raw = source.fetch_raw("2026-08-27")
 
     assert calls == {"post": 0, "get": 0}
-    assert raw["daily_avg_hr"] is None
+    assert raw["prior_day_avg_hr"] is None
     assert raw["prior_day_steps"] is None
     assert raw["prior_day_active_calories"] is None
     assert raw["hrv"] is None
@@ -308,8 +308,9 @@ def test_rollup_maps_fetch_daily_heart_and_previous_day_activity():
     """心拍の意味を明示し、朝時点で確定した前日活動量を取得する。"""
     from sleeptech.collectors import google_health_api as gha
 
-    assert "daily_avg_hr" in gha._ROLLUP_MAP
+    assert "daily_avg_hr" not in gha._ROLLUP_MAP
     assert "night_avg_hr" not in gha._ROLLUP_MAP
+    assert "prior_day_avg_hr" in gha._PRIOR_DAY_ROLLUP_MAP
     assert "prior_day_steps" in gha._PRIOR_DAY_ROLLUP_MAP
     assert "prior_day_active_calories" in gha._PRIOR_DAY_ROLLUP_MAP
 

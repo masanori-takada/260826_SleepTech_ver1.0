@@ -13,7 +13,9 @@ def _history(count: int = 14) -> list[DailyVital]:
             deep_sleep_min=75,
             sleep_efficiency_pct=91.0,
             hrv=45.0,
-            daily_avg_hr=62.0,
+            skin_temp_delta=0.0,
+            respiration_rate=14.0,
+            prior_day_avg_hr=62.0,
             prior_day_steps=8000,
             prior_day_active_calories=450.0,
             weight_kg=65.0,
@@ -66,7 +68,10 @@ def test_fragmentation_and_low_efficiency_raise_recovery_warning():
 
 
 def test_autonomic_is_shown_only_with_personal_baseline():
-    vital = DailyVital(date="2026-08-26", total_sleep_min=420, wake_h=33.0, hrv=25.0, daily_avg_hr=70.0)
+    vital = DailyVital(
+        date="2026-08-26", total_sleep_min=420, wake_h=33.0,
+        hrv=25.0, prior_day_avg_hr=70.0,
+    )
     curve, ranges = _curve()
 
     short = assess_conditions(vital, _history(6), curve, ranges, target_sleep_h=7.0)
@@ -74,7 +79,7 @@ def test_autonomic_is_shown_only_with_personal_baseline():
 
     assert "autonomic" not in _by_domain(short)
     assert _by_domain(enough)["autonomic"].level in {"注意", "要休養"}
-    assert "日中平均心拍" in _by_domain(enough)["autonomic"].headline
+    assert "前日平均心拍" in _by_domain(enough)["autonomic"].headline
     assert "睡眠時心拍" not in _by_domain(enough)["autonomic"].headline
 
 
@@ -94,6 +99,38 @@ def test_rem_and_activity_use_personal_baselines_without_penalizing_low_steps():
 
     assert domains["mood"].level == "注意"
     assert domains["physical_load"].level == "通常"
+    assert "180kcal" in domains["physical_load"].headline
+
+
+def test_current_vital_is_excluded_from_personal_baseline():
+    """当日の値自身を基準日数や中央値へ混ぜない。"""
+    vital = DailyVital(
+        date="2026-08-26", total_sleep_min=420, wake_h=33.0,
+        hrv=10.0, prior_day_avg_hr=90.0,
+    )
+    curve, ranges = _curve()
+    history = [vital, *_history(6)]
+
+    report = assess_conditions(vital, history, curve, ranges, target_sleep_h=7.0)
+
+    assert "autonomic" not in _by_domain(report)
+
+
+def test_autonomic_uses_temperature_and_respiration_when_baseline_exists():
+    vital = DailyVital(
+        date="2026-08-26", total_sleep_min=420, wake_h=33.0,
+        hrv=45.0, prior_day_avg_hr=62.0,
+        skin_temp_delta=1.5, respiration_rate=18.0,
+    )
+    curve, ranges = _curve()
+
+    autonomic = _by_domain(
+        assess_conditions(vital, _history(), curve, ranges, target_sleep_h=7.0)
+    )["autonomic"]
+
+    assert autonomic.level in {"注意", "要休養"}
+    assert "皮膚温差+1.5℃" in autonomic.headline
+    assert "呼吸18.0回/分" in autonomic.headline
 
 
 def test_stable_body_composition_is_hidden_from_daily_message():

@@ -88,3 +88,11 @@ def test_daily_vital_reads_legacy_heart_rate_as_daily_average():
     assert vital.daily_avg_hr == 61.5
     assert vital.sleep_avg_hr is None
     assert vital.heart_rate_source == "legacy_daily_rollup"
+
+
+def test_prior_day_average_heart_rate_round_trips():
+    vital = DailyVital(date="2026-08-26", prior_day_avg_hr=63.5)
+
+    restored = DailyVital.from_dict(vital.to_dict())
+
+    assert restored.prior_day_avg_hr == 63.5

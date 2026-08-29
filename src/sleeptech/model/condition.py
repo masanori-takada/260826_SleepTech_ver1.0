@@ -147,22 +147,44 @@ def _autonomic_assessment(vital: DailyVital, history: list[DailyVital]) -> Domai
     if vital.hrv is None or len(hrv_values) < 7:
         return None
     hrv_z = _robust_deviation(float(vital.hrv), hrv_values)
-    heart_values = _present(history, "daily_avg_hr")
+    heart_values = _present(history, "prior_day_avg_hr")
     heart_z = None
-    if vital.daily_avg_hr is not None and len(heart_values) >= 7:
-        heart_z = _robust_deviation(float(vital.daily_avg_hr), heart_values)
+    if vital.prior_day_avg_hr is not None and len(heart_values) >= 7:
+        heart_z = _robust_deviation(float(vital.prior_day_avg_hr), heart_values)
 
-    severe = hrv_z <= -3 or (heart_z is not None and heart_z >= 3)
-    warning = hrv_z <= -1.5 or (heart_z is not None and heart_z >= 2)
-    level = "要休養" if severe else "注意" if warning else "通常"
-    heart_text = (
-        f"日中平均心拍{vital.daily_avg_hr:.0f}bpm"
-        if vital.daily_avg_hr is not None else "日中平均心拍なし"
+    temperature_values = _present(history, "skin_temp_delta")
+    temperature_z = None
+    if vital.skin_temp_delta is not None and len(temperature_values) >= 7:
+        temperature_z = _robust_deviation(float(vital.skin_temp_delta), temperature_values)
+    respiration_values = _present(history, "respiration_rate")
+    respiration_z = None
+    if vital.respiration_rate is not None and len(respiration_values) >= 7:
+        respiration_z = _robust_deviation(float(vital.respiration_rate), respiration_values)
+
+    severe = (
+        hrv_z <= -3
+        or (heart_z is not None and heart_z >= 3)
+        or (temperature_z is not None and abs(temperature_z) >= 3)
+        or (respiration_z is not None and abs(respiration_z) >= 3)
     )
+    warning = (
+        hrv_z <= -1.5
+        or (heart_z is not None and heart_z >= 2)
+        or (temperature_z is not None and abs(temperature_z) >= 2)
+        or (respiration_z is not None and abs(respiration_z) >= 2)
+    )
+    level = "要休養" if severe else "注意" if warning else "通常"
+    metrics = [f"HRV{vital.hrv:.0f}ms"]
+    if vital.prior_day_avg_hr is not None:
+        metrics.append(f"前日平均心拍{vital.prior_day_avg_hr:.0f}bpm")
+    if vital.skin_temp_delta is not None and len(temperature_values) >= 7:
+        metrics.append(f"皮膚温差{vital.skin_temp_delta:+.1f}℃")
+    if vital.respiration_rate is not None and len(respiration_values) >= 7:
+        metrics.append(f"呼吸{vital.respiration_rate:.1f}回/分")
     return DomainAssessment(
         domain="autonomic",
         level=level,
-        headline=f"HRV{vital.hrv:.0f}ms、{heart_text}",
+        headline="、".join(metrics),
         evidence=("本人の28日以内の中央値・MADとの比較",),
         confidence="high" if len(hrv_values) >= 14 else "medium",
         valid_days=min(len(hrv_values), 28),
@@ -189,19 +211,34 @@ def _mood_assessment(vital: DailyVital, history: list[DailyVital]) -> DomainAsse
 
 
 def _physical_assessment(vital: DailyVital, history: list[DailyVital]) -> DomainAssessment | None:
-    values = _present(history, "prior_day_steps")
-    if vital.prior_day_steps is None or len(values) < 7:
+    step_values = _present(history, "prior_day_steps")
+    calorie_values = _present(history, "prior_day_active_calories")
+    if (
+        (vital.prior_day_steps is None or len(step_values) < 7)
+        and (vital.prior_day_active_calories is None or len(calorie_values) < 7)
+    ):
         return None
-    deviation = _robust_deviation(float(vital.prior_day_steps), values)
-    high_load = deviation >= 2
+    deviations: list[float] = []
+    if vital.prior_day_steps is not None and len(step_values) >= 7:
+        deviations.append(_robust_deviation(float(vital.prior_day_steps), step_values))
+    if vital.prior_day_active_calories is not None and len(calorie_values) >= 7:
+        deviations.append(
+            _robust_deviation(float(vital.prior_day_active_calories), calorie_values)
+        )
+    high_load = max(deviations, default=0.0) >= 2
     level = "注意" if high_load else "通常"
+    metrics: list[str] = []
+    if vital.prior_day_steps is not None:
+        metrics.append(f"{vital.prior_day_steps:,}歩")
+    if vital.prior_day_active_calories is not None:
+        metrics.append(f"{vital.prior_day_active_calories:.0f}kcal")
     return DomainAssessment(
         domain="physical_load",
         level=level,
-        headline=f"前日{vital.prior_day_steps:,}歩、個人基準比{'高負荷' if high_load else '平常範囲'}",
-        evidence=("前日の確定歩数と個人基準",),
+        headline=f"前日{'・'.join(metrics)}、個人基準比{'高負荷' if high_load else '平常範囲'}",
+        evidence=("前日の確定活動量と個人基準",),
         confidence="medium",
-        valid_days=min(len(values), 28),
+        valid_days=min(max(len(step_values), len(calorie_values)), 28),
         recommended_actions=("脚の疲労を見て運動強度を下げる",) if high_load else (),
     )
 
@@ -236,16 +273,18 @@ def assess_conditions(
     target_sleep_h: float,
 ) -> DailyConditionReport:
     """計算可能で行動に結びつく領域だけを表示対象として返す。"""
+    # 保存直後に取得した履歴は当日を含むため、個人基準から評価対象自身を除外する。
+    prior_history = [item for item in history if item.date != vital.date]
     assessments: list[DomainAssessment] = [
         _focus_assessment(curve, ranges),
         _sleepiness_assessment(ranges),
         _recovery_assessment(vital, target_sleep_h),
     ]
     for optional in (
-        _autonomic_assessment(vital, history),
-        _mood_assessment(vital, history),
-        _physical_assessment(vital, history),
-        _body_assessment(vital, history),
+        _autonomic_assessment(vital, prior_history),
+        _mood_assessment(vital, prior_history),
+        _physical_assessment(vital, prior_history),
+        _body_assessment(vital, prior_history),
     ):
         if optional is not None:
             assessments.append(optional)

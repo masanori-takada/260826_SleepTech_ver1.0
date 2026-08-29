@@ -119,6 +119,7 @@ class DailyVital:
     heart_rate_source: str | None = None
     weight_kg: float | None = None
     body_fat_pct: float | None = None
+    prior_day_avg_hr: float | None = None
     prior_day_steps: int | None = None
     prior_day_active_calories: float | None = None
     ingested_at: str | None = None
