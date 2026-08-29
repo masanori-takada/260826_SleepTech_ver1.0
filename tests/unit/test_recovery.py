@@ -85,3 +85,31 @@ def test_cutoff_formula_is_exact():
 def test_recovery_plan_caffeine_times_are_typed_as_float_list():
     """公開インターフェースのカフェイン時刻型は float のリストである。"""
     assert typing.get_type_hints(RecoveryPlan)["caffeine_times_h"] == list[float]
+
+
+def test_nap_is_placed_before_the_afternoon_dip_not_the_curve_worst():
+    """仮眠は午後の谷の直前に置く。
+
+    睡眠不足の日はカーブ上の最悪時刻が起床直後へ寄るため、それを基準に
+    すると仮眠が谷より後に来る（実機で谷7:20・仮眠9:20が出た）。
+    """
+    plan = recovery.plan(WAKE_H, NEXT_BED_H)
+
+    early_dip = recovery.times(WAKE_H, NEXT_BED_H, WAKE_H + 2.0, plan)
+    late_dip = recovery.times(WAKE_H, NEXT_BED_H, WAKE_H + 8.0, plan)
+
+    assert early_dip.nap_h == late_dip.nap_h
+    assert early_dip.nap_h <= WAKE_H + C.PHASE_DIP_OFFSET_H
+    assert early_dip.nap_h <= plan.caffeine_cutoff_h
+
+
+def test_recovery_times_sit_on_a_five_minute_grid():
+    """表示とガードレール照合の丸め差で不一致にならないようにする。"""
+    plan = recovery.plan(WAKE_H + 0.0138, NEXT_BED_H)
+    times = recovery.times(WAKE_H + 0.0138, NEXT_BED_H, WAKE_H + 8.0, plan)
+
+    values = [
+        value for value in vars(times).values() if not isinstance(value, tuple)
+    ]
+    values.extend(times.caffeine_times_h)
+    assert all(round(value * 60) % 5 == 0 for value in values)

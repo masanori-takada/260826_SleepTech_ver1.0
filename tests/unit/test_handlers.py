@@ -219,7 +219,10 @@ def _patch_morning_dependencies(monkeypatch):
     calls = []
     monkeypatch.setattr(mh, "load_settings", lambda: settings)
     monkeypatch.setattr(mh.hd, "build_morning_deps", lambda actual: "deps")
-    monkeypatch.setattr(mh, "run_morning", lambda date, deps: calls.append((date, deps)) or {"ok": True})
+    monkeypatch.setattr(
+        mh, "run_morning",
+        lambda date, deps, now_h=None: calls.append((date, deps)) or {"ok": True},
+    )
     return calls
 
 

@@ -57,8 +57,17 @@ class MorningDeps:
     deadline: object | None = None
 
 
-def run_morning(date: str, deps: MorningDeps) -> dict:
-    """朝フローを実行する。date は起点日（前夜の夜メッセージと同じ日付）。"""
+# 朝の定時配信時刻。起点日 0:00 からの経過時間（翌日 9:30）。
+DEFAULT_MORNING_NOW_H = 24.0 + 9.5
+
+
+def run_morning(date: str, deps: MorningDeps, now_h: float | None = None) -> dict:
+    """朝フローを実行する。date は起点日（前夜の夜メッセージと同じ日付）。
+
+    now_h は起点日 0:00 からの経過時間で表した配信時刻。既に過ぎた時刻を
+    リカバリーに出さないために使う。省略時は定時配信の 9:30 とみなす。
+    """
+    now_h = DEFAULT_MORNING_NOW_H if now_h is None else now_h
     log = StructuredLogger()
     log.log("morning_start", date=date)
 
@@ -146,19 +155,20 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
     # リカバリーは［注意］［要休養］の領域だけに1:1で出す。時刻メニューは
     # 予測カーブが示した実際の谷から組み立て、LLMにはそこから選ばせる。
     condition_body = cn.render_condition_section(condition_report, vital)
-    targets = cn.recovery_targets(condition_report)
     times = rc.times(
         vital.wake_h, next_bedtime_h, _dip_h(condition_report, vital.wake_h), plan
     )
+    # 配信時点で過ぎている時刻は提案に使えない。使える時刻が残らない領域は外す。
+    targets = cn.actionable_targets(cn.recovery_targets(condition_report), times, now_h)
     required_lines = tuple(
         line.rstrip("。．") for line in condition_body.splitlines() if line.strip()
     )
     facts = gv.Facts(
         required_phrases=required_lines,
-        allowed_times=list(cn.recovery_time_materials(targets, times)),
+        allowed_times=list(cn.recovery_time_materials(targets, times, now_h)),
     )
     body, used_fallback, regen_count, judge_record = _compose(
-        deps, condition_body, targets, times, facts, log,
+        deps, condition_body, targets, times, facts, log, now_h,
     )
 
     # push の例外はここで捕捉せず伝播させる。送信していないのに mark_notified して
@@ -269,7 +279,7 @@ def _judge_record(status: str, score, attempts: int) -> dict:
     }
 
 
-def _compose(deps, condition_body, targets, times, facts, log):
+def _compose(deps, condition_body, targets, times, facts, log, now_h=None):
     """リカバリー節を生成し、構造・ガードレール・judge の順に検査する。
 
     戻り値は (本文, フォールバックか, 再生成回数, judgeの記録)。
@@ -284,8 +294,8 @@ def _compose(deps, condition_body, targets, times, facts, log):
         log.log("recovery_skipped", reason="no_target_domain")
         return condition_body, False, 0, _judge_record("skipped", None, 0)
 
-    material = cn.build_recovery_material(targets, times)
-    expected = cn.recovery_domain_times(targets, times)
+    material = cn.build_recovery_material(targets, times, now_h)
+    expected = cn.recovery_domain_times(targets, times, now_h)
     domain_lines = tuple(
         f"{label}［{assessment.level}］{assessment.headline}"
         for label, assessment in zip(
@@ -323,7 +333,7 @@ def _compose(deps, condition_body, targets, times, facts, log):
         score = jg.score_recovery(
             deps.llm_client,
             prompts.JUDGE_SYSTEM,
-            prompts.judge_user(domain_lines, section.strip()),
+            prompts.judge_user(domain_lines, section.strip(), now_h),
             log,
         )
         if score is None:
@@ -348,7 +358,7 @@ def _compose(deps, condition_body, targets, times, facts, log):
         )
 
     fallback = "\n\n".join([
-        condition_body, cn.render_recovery_section(targets, times),
+        condition_body, cn.render_recovery_section(targets, times, now_h),
     ])
     status = "vetoed" if judged else "unavailable"
     return fallback, True, max(attempts_made - 1, 0), _judge_record(status, None, judged)

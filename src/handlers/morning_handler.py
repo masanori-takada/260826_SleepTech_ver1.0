@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date as date_cls
+from datetime import datetime
+from datetime import time as time_cls
 
 from sleeptech.config import load_settings
 from sleeptech.observability import StructuredLogger
@@ -38,6 +40,16 @@ def _bad_request(message: str) -> dict:
     return {"statusCode": 400, "body": '{"error": "' + message + '"}'}
 
 
+def _now_h(date: str, scheduled) -> float:
+    """配信時刻を起点日 0:00 からの経過時間へ直す。
+
+    リカバリーに「すでに過ぎた時刻」を出さないための基準。
+    """
+    origin = date_cls.fromisoformat(date)
+    delta = scheduled - datetime.combine(origin, time_cls(), tzinfo=scheduled.tzinfo)
+    return delta.total_seconds() / 3600.0
+
+
 def handler(event, context=None) -> dict:
     event = event or {}
     if not isinstance(event, Mapping):
@@ -49,6 +61,7 @@ def handler(event, context=None) -> dict:
 
     settings = load_settings()
 
+    now_h = None
     if "scheduled_time" in event:
         resolved = hd.resolve_scheduled_time(
             event["scheduled_time"], MORNING_CRON_HOUR_JST, MORNING_CRON_MINUTE_JST
@@ -67,6 +80,7 @@ def handler(event, context=None) -> dict:
         else:
             # 再試行時の現在時刻ではなく、Schedulerの予定時刻を使う。
             date = hd.origin_date(scheduled, morning=True)
+            now_h = _now_h(date, scheduled)
     elif "date" in event:
         value = event["date"]
         if not isinstance(value, str):
@@ -82,4 +96,4 @@ def handler(event, context=None) -> dict:
     deadline = hd.deadline_from_context(context)
     deps = (hd.build_morning_deps(settings, deadline) if deadline is not None
             else hd.build_morning_deps(settings))
-    return run_morning(date, deps)
+    return run_morning(date, deps, now_h)

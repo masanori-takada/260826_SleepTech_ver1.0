@@ -54,36 +54,71 @@ _TIME_MEANINGS = {
     "bedtime_h": "今夜の就寝目標 ",
 }
 
-# 領域 → (使ってよい時刻のフィールド, 決定論フォールバックの文面)。
+# 領域 → (使ってよい時刻のフィールド, 決定論フォールバックの候補)。
+# 候補は (必要な時刻, 文面) の並びで、必要な時刻が全部使える最初のものを採る。
 # 材料・構造検査・フォールバックはすべてこの表を参照する。
-_RECOVERY_MENU: dict[str, tuple[tuple[str, ...], str]] = {
+_RECOVERY_MENU: dict[str, tuple[tuple[str, ...], tuple[tuple[tuple[str, ...], str], ...]]] = {
     "focus": (
         ("focus_block_h", "dip_h", "nap_h"),
-        "{focus_block_h}から重要な作業に取りかかり、{dip_h}前後は手を動かす作業に回す",
+        (
+            (("focus_block_h", "dip_h"),
+             "{focus_block_h}から重要な作業に取りかかり、{dip_h}前後は手を動かす作業に回す"),
+            (("focus_block_h",), "{focus_block_h}から重要な作業を1件だけ片づける"),
+            (("nap_h",), "{nap_h}に15分だけ目を閉じて集中を戻す"),
+            (("dip_h",), "{dip_h}前後は判断の重い作業を入れない"),
+        ),
     ),
     "sleepiness": (
         ("nap_h", "caffeine_times_h", "caffeine_cutoff_h"),
-        "{nap_h}に15〜20分だけ目を閉じて横になる",
+        (
+            (("nap_h",), "{nap_h}に15〜20分だけ目を閉じて横になる"),
+            (("caffeine_times_h",), "{caffeine_times_h}にコーヒーを1杯だけ入れる"),
+            (("caffeine_cutoff_h",), "{caffeine_cutoff_h}以降はカフェインを取らない"),
+        ),
     ),
     "sleep_recovery": (
         ("bath_h", "winddown_h", "bedtime_h", "light_avoid_after_h"),
-        "{bath_h}に湯船から出て、{bedtime_h}までに布団に入る",
+        (
+            (("bath_h", "bedtime_h"),
+             "{bath_h}に湯船から出て、{bedtime_h}までに布団に入る"),
+            (("bedtime_h",), "{bedtime_h}までに布団に入る"),
+            (("winddown_h",), "{winddown_h}から画面を閉じて体を休める"),
+            (("bath_h",), "{bath_h}に15分湯船につかる"),
+            (("light_avoid_after_h",), "{light_avoid_after_h}以降は照明を落とす"),
+        ),
     ),
     "autonomic": (
         ("winddown_h", "dinner_h", "exercise_h"),
-        "{winddown_h}から画面を閉じ、息を長く吐く呼吸をゆっくり繰り返す",
+        (
+            (("winddown_h",),
+             "{winddown_h}から画面を閉じ、息を長く吐く呼吸を10回する"),
+            (("dinner_h",), "{dinner_h}までに夕食を終える"),
+            (("exercise_h",), "{exercise_h}の運動は軽い散歩までにする"),
+        ),
     ),
     "mood": (
         ("light_morning_h", "exercise_h", "winddown_h"),
-        "{light_morning_h}までに外の光を10分浴びる",
+        (
+            (("light_morning_h",), "{light_morning_h}までに外の光を10分浴びる"),
+            (("exercise_h",), "{exercise_h}に20分歩いて気分を切り替える"),
+            (("winddown_h",), "{winddown_h}から画面を閉じて頭を休める"),
+        ),
     ),
     "physical_load": (
         ("exercise_h", "bath_h"),
-        "{exercise_h}の運動は軽い散歩までにして、{bath_h}に湯船で脚をほぐす",
+        (
+            (("exercise_h", "bath_h"),
+             "{exercise_h}の運動は軽い散歩までにして、{bath_h}に湯船で脚をほぐす"),
+            (("exercise_h",), "{exercise_h}の運動は軽い散歩までにする"),
+            (("bath_h",), "{bath_h}に湯船で脚を10分ほぐす"),
+        ),
     ),
     "body_composition": (
         ("dinner_h", "exercise_h"),
-        "{dinner_h}までに夕食を終える",
+        (
+            (("dinner_h",), "{dinner_h}までに夕食を終える"),
+            (("exercise_h",), "{exercise_h}に20分歩く"),
+        ),
     ),
 }
 
@@ -426,26 +461,49 @@ def _menu_times(times: RecoveryTimes, fields: tuple[str, ...]) -> tuple[float, .
 def recovery_domain_times(
     targets: tuple[DomainAssessment, ...],
     times: RecoveryTimes,
+    now_h: float | None = None,
 ) -> tuple[tuple[str, tuple[float, ...], str], ...]:
     """対象領域ごとに (ラベル, 使ってよい時刻, 評価の文言) を並べる。
 
     材料・構造検査・決定論フォールバックが参照する単一の情報源。
+    now_h を渡すと、その時点で既に過ぎた時刻を落とす。朝9:30に届くのに
+    「5:50までに屋外光を」と書いても実行できないため、提案の対象にしない。
+    使える時刻が残らなかった領域は、そもそも提案を作れないので外す。
     """
     rows: list[tuple[str, tuple[float, ...], str]] = []
     for assessment in targets:
-        fields, _ = _RECOVERY_MENU.get(assessment.domain, ((), ""))
+        fields, _ = _RECOVERY_MENU.get(assessment.domain, ((), ()))
         label = _DOMAIN_LABELS.get(assessment.domain, assessment.domain)
-        rows.append((label, _menu_times(times, fields), assessment.headline))
+        values = _menu_times(times, fields)
+        if now_h is not None:
+            values = tuple(value for value in values if value >= now_h)
+        if not values:
+            continue
+        rows.append((label, values, assessment.headline))
     return tuple(rows)
+
+
+def actionable_targets(
+    targets: tuple[DomainAssessment, ...],
+    times: RecoveryTimes,
+    now_h: float | None = None,
+) -> tuple[DomainAssessment, ...]:
+    """今から実行できる時刻が残っている領域だけを返す。"""
+    usable = {label for label, _, _ in recovery_domain_times(targets, times, now_h)}
+    return tuple(
+        assessment for assessment in targets
+        if _DOMAIN_LABELS.get(assessment.domain, assessment.domain) in usable
+    )
 
 
 def recovery_time_materials(
     targets: tuple[DomainAssessment, ...],
     times: RecoveryTimes,
+    now_h: float | None = None,
 ) -> tuple[float, ...]:
     """ガードレールの allowed_times に渡す、提示済み時刻の全体集合。"""
     values: list[float] = []
-    for _, domain_times, _headline in recovery_domain_times(targets, times):
+    for _, domain_times, _headline in recovery_domain_times(targets, times, now_h):
         values.extend(domain_times)
     return tuple(dict.fromkeys(values))
 
@@ -453,17 +511,23 @@ def recovery_time_materials(
 def build_recovery_material(
     targets: tuple[DomainAssessment, ...],
     times: RecoveryTimes,
+    now_h: float | None = None,
 ) -> str:
     """LLMがリカバリー策を組み立てるための材料。数値はここで確定させる。"""
-    if not targets:
+    rows = recovery_domain_times(targets, times, now_h)
+    if not rows:
         return ""
+    allowed = {label: values for label, values, _ in rows}
     lines = ["【リカバリー提案の材料】"]
-    for assessment in targets:
+    if now_h is not None:
+        lines.append(f"今は{fmt_hm_plain(now_h)}。これより後の時刻だけを使う。")
+    for assessment in actionable_targets(targets, times, now_h):
         label = _DOMAIN_LABELS.get(assessment.domain, assessment.domain)
         lines.append(f"■ {label}［{assessment.level}］{assessment.headline}")
         offered = "・".join(
             f"{_TIME_MEANINGS[field]}{fmt_hm_plain(value)}"
             for field, value in _labelled_times(assessment.domain, times)
+            if value in allowed[label]
         )
         lines.append(f"  使ってよい時刻: {offered}")
     lines.append(
@@ -475,7 +539,7 @@ def build_recovery_material(
 
 def _labelled_times(domain: str, times: RecoveryTimes) -> list[tuple[str, float]]:
     """材料に載せる (意味, 時刻) の並び。"""
-    fields, _ = _RECOVERY_MENU.get(domain, ((), ""))
+    fields, _ = _RECOVERY_MENU.get(domain, ((), ()))
     labelled: list[tuple[str, float]] = []
     for field_name in fields:
         value = getattr(times, field_name)
@@ -489,38 +553,57 @@ def _labelled_times(domain: str, times: RecoveryTimes) -> list[tuple[str, float]
 def render_recovery_section(
     targets: tuple[DomainAssessment, ...],
     times: RecoveryTimes,
+    now_h: float | None = None,
 ) -> str:
-    """LLMが使えないときの決定論的なリカバリー節。対象0件なら空文字。"""
-    if not targets:
+    """LLMが使えないときの決定論的なリカバリー節。出せる領域が無ければ空文字。"""
+    rows = recovery_domain_times(targets, times, now_h)
+    if not rows:
         return ""
+    allowed = {label: values for label, values, _ in rows}
     lines = ["今日のリカバリー"]
-    for assessment in targets:
+    for assessment in actionable_targets(targets, times, now_h):
         label = _DOMAIN_LABELS.get(assessment.domain, assessment.domain)
-        _, template = _RECOVERY_MENU.get(assessment.domain, ((), ""))
-        lines.append(f"・{label}：{_fill(template, times)}")
-    return "\n".join(lines)
+        line = _fallback_line(assessment.domain, times, allowed[label])
+        if line:
+            lines.append(f"・{label}：{line}")
+    return "\n".join(lines) if len(lines) > 1 else ""
 
 
-def _fill(template: str, times: RecoveryTimes) -> str:
-    """テンプレートの {フィールド名} を時刻表記へ置き換える。"""
-    filled = template
-    for field_name in _TIME_MEANINGS:
-        token = "{" + field_name + "}"
-        if token not in filled:
+def _field_value(times: RecoveryTimes, field_name: str) -> float | None:
+    """フィールド名を単一の時刻へ直す。カフェインは最初の1回を使う。"""
+    value = getattr(times, field_name)
+    if isinstance(value, tuple):
+        return value[0] if value else None
+    return value
+
+
+def _fallback_line(
+    domain: str, times: RecoveryTimes, allowed: tuple[float, ...]
+) -> str:
+    """使える時刻が揃っている最初の候補を採る。
+
+    1つのテンプレートを別の時刻へ流用すると「20:00までに外の光を浴びる」
+    のように文意が壊れるため、必要な時刻が残っている候補だけを使う。
+    """
+    _, candidates = _RECOVERY_MENU.get(domain, ((), ()))
+    for required, template in candidates:
+        values = {name: _field_value(times, name) for name in required}
+        if any(value is None or value not in allowed for value in values.values()):
             continue
-        value = getattr(times, field_name)
-        if isinstance(value, tuple):
-            value = value[0] if value else times.wake_h
-        filled = filled.replace(token, fmt_hm_plain(value))
-    return filled
+        filled = template
+        for name, value in values.items():
+            filled = filled.replace("{" + name + "}", fmt_hm_plain(value))
+        return filled
+    return ""
 
 
 def render_morning_report(
     report: DailyConditionReport,
     vital: DailyVital,
     times: RecoveryTimes,
+    now_h: float | None = None,
 ) -> str:
     """確定部と決定論的リカバリーを繋いだ朝本文（LLM不通時のフォールバック）。"""
     condition = render_condition_section(report, vital)
-    recovery = render_recovery_section(recovery_targets(report), times)
+    recovery = render_recovery_section(recovery_targets(report), times, now_h)
     return "\n\n".join([condition, recovery]) if recovery else condition

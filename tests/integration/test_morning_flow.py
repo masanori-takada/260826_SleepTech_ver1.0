@@ -710,3 +710,44 @@ def test_headline_quotation_is_rejected_end_to_end():
 
     assert got["used_fallback"] is True
     assert "を踏まえて休む" not in push.sent[0]["text"]
+
+
+def test_recovery_never_offers_a_time_that_already_passed():
+    """配信時点で過ぎた時刻を提案しない（実機で5:50・7:20が出た回帰）。"""
+    import re
+
+    memory = _memory()
+    source = FakeHealthSource({
+        "total_sleep_min": 241, "deep_sleep_min": 48, "rem_sleep_min": 5,
+        "awakenings": 0, "bedtime_h": 25.0, "wake_h": 29.33,  # 5:20 起床
+    })
+    push = FakePushClient()
+    now_h = 24.0 + 9.5  # 翌日 9:30 に配信
+
+    morning.run_morning(
+        DATE, _deps(memory=memory, source=source, llm=RecoveryLlm(), push=push), now_h
+    )
+
+    text = push.sent[0]["text"]
+    section = text.split("今日のリカバリー")[1] if "今日のリカバリー" in text else ""
+    for hour, minute in re.findall(r"(?<!\d)(\d{1,2}):(\d{2})(?!\d)", section):
+        assert int(hour) + int(minute) / 60.0 >= 9.5
+
+
+def test_judge_is_told_the_current_time():
+    """採点入力に現在時刻を渡す。無いと過去時刻の提案を妥当と誤判定する。"""
+    llm = RecoveryLlm()
+
+    morning.run_morning(DATE, _deps(llm=llm), 24.0 + 9.5)
+
+    assert "現在時刻: 9:30" in llm.judged[0]
+
+
+def test_morning_defaults_to_the_scheduled_delivery_time():
+    """now_h を省いても定時配信の9:30を基準にする。"""
+    memory = _memory()
+    llm = RecoveryLlm()
+
+    morning.run_morning(DATE, _deps(memory=memory, llm=llm))
+
+    assert "今は9:30" in llm.generated[0]

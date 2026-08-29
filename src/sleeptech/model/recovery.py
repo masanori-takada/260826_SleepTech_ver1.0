@@ -87,8 +87,10 @@ def times(
     dip_h は予測カーブが示した実際の谷であり、定数の午後の谷では代用しない
     （起床時刻が動くと谷も動くため）。
     """
+    # 仮眠は「午後の谷」の直前に置く。カーブ上の最悪時刻（dip_h）は睡眠不足の
+    # 日に起床直後へ寄るため、それを基準にすると仮眠が谷より後に来て矛盾する。
     nap = min(
-        max(dip_h - C.NAP_BEFORE_DIP_H, wake_h + C.NAP_EARLIEST_OFFSET_H),
+        wake_h + C.PHASE_DIP_OFFSET_H - C.NAP_BEFORE_DIP_H,
         plan.caffeine_cutoff_h,
     )
     exercise = max(

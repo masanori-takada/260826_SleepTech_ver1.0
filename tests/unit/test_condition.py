@@ -7,6 +7,7 @@ from sleeptech.timefmt import fmt_hm_plain as _hm
 from sleeptech.model.condition import (
     assess_conditions,
     build_recovery_material,
+    actionable_targets,
     recovery_domain_times,
     recovery_targets,
     recovery_time_materials,
@@ -411,3 +412,83 @@ def test_condition_section_shows_stars_instead_of_bullets():
     assert all(line[0] in "⭐☆" for line in body)
     assert not any(line.startswith("・") for line in body)
     assert all(line.startswith("・") for line in recovery.strip().splitlines())
+
+
+# --- 配信時点で過ぎている時刻は提案しない ---
+
+
+def test_past_times_are_dropped_from_the_menu():
+    """朝9:30に届くのに「5:50までに屋外光を」とは書けない。"""
+    report, _, _, times = _case(316, 78.0, 24)
+    targets = recovery_targets(report)
+    now_h = times.wake_h + 4.0  # 起床から4時間後に配信
+
+    for _label, values, _headline in recovery_domain_times(targets, times, now_h):
+        assert all(value >= now_h for value in values)
+    assert all(
+        value >= now_h for value in recovery_time_materials(targets, times, now_h)
+    )
+
+
+def test_domains_without_a_usable_time_are_dropped():
+    """使える時刻が残らない領域は提案を作れないので外す。"""
+    report, _, _, times = _case(316, 78.0, 24)
+    targets = recovery_targets(report)
+    late = times.bedtime_h + 1.0  # 就寝目標も過ぎた時点
+
+    assert targets, 'この入力では対象領域があるはず'
+    assert actionable_targets(targets, times, late) == ()
+    assert recovery_domain_times(targets, times, late) == ()
+    assert render_recovery_section(targets, times, late) == ""
+    # まだ使える時刻が残る時点なら領域は残る
+    early = times.wake_h + 4.0
+    assert actionable_targets(targets, times, early) == targets
+
+
+def test_deterministic_recovery_never_offers_a_past_time():
+    """決定論フォールバックも過ぎた時刻を書かない。"""
+    import re
+
+    report, _, _, times = _case(316, 78.0, 24)
+    targets = recovery_targets(report)
+    now_h = times.wake_h + 4.0
+
+    section = render_recovery_section(targets, times, now_h)
+    offered = {
+        f"{int(h)}:{int(m):02d}"
+        for h, m in re.findall(r"(?<!\d)(\d{1,2}):(\d{2})(?!\d)", section)
+    }
+    future = {
+        _hm(value) for value in recovery_time_materials(targets, times, now_h)
+    }
+
+    assert offered
+    assert offered <= future
+
+
+def test_material_tells_the_current_time():
+    """材料に現在時刻を書き、それより後だけを使わせる。"""
+    report, _, _, times = _case(316, 78.0, 24)
+    targets = recovery_targets(report)
+    now_h = times.wake_h + 4.0
+
+    material = build_recovery_material(targets, times, now_h)
+
+    assert f"今は{_hm(now_h)}" in material
+
+
+def test_fallback_template_is_not_reused_for_another_time():
+    """使えない時刻のテンプレートを別の時刻へ流用しない。
+
+    以前は残っている時刻へ機械的に寄せていたため、朝の光の文面が夕方の
+    運動時刻に当てられて「20:00までに外の光を浴びる」が出た。
+    """
+    report, _, _, times = _case(316, 78.0, 24)
+    targets = recovery_targets(report)
+    now_h = times.light_morning_h + 0.5  # 朝の光の期限を過ぎた時点
+
+    section = render_recovery_section(targets, times, now_h)
+
+    assert "外の光" not in section or _hm(times.light_morning_h) in section
+    for line in section.splitlines()[1:]:
+        assert line.count("：") == 1
