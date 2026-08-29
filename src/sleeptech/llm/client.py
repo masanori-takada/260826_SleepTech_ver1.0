@@ -14,7 +14,10 @@ import time
 
 API_URL = "https://api.openai.com/v1/chat/completions"
 MAX_ATTEMPTS = 3       # 初回 + リトライ2回
-MAX_TOKENS = 700
+# 推論モデルでは reasoning のトークンも max_completion_tokens に含まれる。
+# 700 のままだとプロンプトを厚くした朝フローで推論に食い尽くされ、
+# 本文が空で返って毎回フォールバックしていた。
+MAX_TOKENS = 2000
 ATTEMPT_TIMEOUT_SEC = 8.0
 LINE_RESERVE_SEC = 12.0
 TIMEOUT_SEC = ATTEMPT_TIMEOUT_SEC
