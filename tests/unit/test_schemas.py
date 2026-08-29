@@ -77,3 +77,14 @@ def test_prediction_reads_old_record_without_new_fields():
     pred = Prediction.from_dict({"date": "2026-08-26", "slot": "MORNING", "mean_drop_pct": 8})
     assert pred.raw_mean_drop_pct is None
     assert pred.calibrated_mean_drop_pct is None
+
+
+def test_daily_vital_reads_legacy_heart_rate_as_daily_average():
+    vital = DailyVital.from_dict({
+        "date": "2026-08-26",
+        "night_avg_hr": 61.5,
+    })
+
+    assert vital.daily_avg_hr == 61.5
+    assert vital.sleep_avg_hr is None
+    assert vital.heart_rate_source == "legacy_daily_rollup"

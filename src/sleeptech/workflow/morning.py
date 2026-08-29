@@ -22,6 +22,7 @@ from sleeptech.model import baseline as bl
 from sleeptech.model import constants as C
 from sleeptech.model.calibration import apply_offset, display_range
 from sleeptech.model import recovery as rc
+from sleeptech.model import condition as cn
 from sleeptech.model import two_process as tp
 from sleeptech.notifier.line import build_message
 from sleeptech.observability import StructuredLogger
@@ -131,40 +132,18 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
     plan = rc.plan(vital.wake_h, next_bedtime_h)
     log.log("recovery", caffeine=len(plan.caffeine_times_h))
 
-    # 6. 文章化・検証・送信
-    # 朝の16時間帯それぞれについて、時刻と低下見込みrangeを必須出力にする。
-    all_pcts = [endpoint for low, high in ranges for endpoint in (low, high)]
-    # 谷（LLM に必須値として要求する低下率）は主要時間帯（起床+2h〜+10h）に限定する。
-    # 全区間で探すと睡眠慣性の影響で起床直後の値が常に最大になってしまうため。
-    worst_index = max(range(len(curve)), key=lambda i: calibrated_focus[i]
-                      if i >= C.MAIN_WINDOW_START_H and i <= C.MAIN_WINDOW_END_H else -1)
-    times = list(plan.caffeine_times_h) + [
-        plan.caffeine_cutoff_h, plan.light_morning_h, plan.light_avoid_after_h
-    ]
-    # I7対応: 許可リストにカーブの各時刻も加える。必須の times には含めない
-    # （含めると全時刻を書かないと通らなくなり、LLMの言い換え余地が消える）。
-    # allowed_times に加えないと「14時から16時にかけて」のような自然な言い換えで
-    # normalize() が 14:00 / 16:00 を抽出し、許可外＝捏造として弾かれてしまう
-    # （「14時台」表記だけは除外規則で通るため、自然な言い換えほど不安定だった）。
-    allowed_times = times + [float(d.hour) for d in curve]
-    confidence_label = {"low": "低", "medium": "中", "high": "高"}[cal.confidence]
-    facts = gv.Facts(
-        times=times,
-        percents=list(ranges[worst_index]),
-        allowed_times=allowed_times,
-        allowed_percents=all_pcts,
-        required_confidence={"low": "低", "medium": "中", "high": "高"}[cal.confidence],
-        required_feedback_count=cal.feedback_count,
-        required_notes=gv.REQUIRED_NOTES,
-        required_hourly_ranges=[(d.hour, ranges[i]) for i, d in enumerate(curve)],
-        protected_lines=tuple(
-            [f"{d.hour}時台 低下見込み{ranges[i][0]}〜{ranges[i][1]}%" for i, d in enumerate(curve)]
-            + [f"信頼度：{confidence_label}（評価データ{cal.feedback_count}件）"]
-            + list(gv.REQUIRED_NOTES)
-        ),
+    # 6. 計算可能な領域だけを短く表示する。16時間分のカーブは保存専用とし、
+    # LINE本文には主要時間帯の谷だけを残す。
+    condition_report = cn.assess_conditions(
+        vital, history, curve, ranges, baseline.effective_target_sleep_h
     )
+    canonical_body = cn.render_morning_report(condition_report, vital, plan)
+    required_lines = tuple(
+        line.rstrip("。．") for line in canonical_body.splitlines() if line.strip()
+    )
+    facts = gv.Facts(required_phrases=required_lines)
     body, used_fallback, regen_count = _compose(
-        deps, curve, ranges, plan, vital, cal.confidence, cal.feedback_count, facts, log,
+        deps, canonical_body, facts, log,
     )
 
     # push の例外はここで捕捉せず伝播させる。送信していないのに mark_notified して
@@ -253,7 +232,7 @@ def _mark_notified(deps: MorningDeps, date: str, log: StructuredLogger) -> None:
         log.log("mark_notified_failed", error=str(exc))
 
 
-def _compose(deps, curve, ranges, plan, vital, confidence, feedback_count, facts, log) -> tuple[str, bool, int]:
+def _compose(deps, canonical_body, facts, log) -> tuple[str, bool, int]:
     """LLM で文章化し検証する。通らなければテンプレート文を返す。
 
     戻り値の3つめは regen_count（ガードレール不通過による再試行回数。
@@ -264,7 +243,7 @@ def _compose(deps, curve, ranges, plan, vital, confidence, feedback_count, facts
     でも regen_count=2（max_regen）という不正確な値が記録されていた。
     実際に試行した回数（attempts_made）から数える。
     """
-    user = prompts.morning_user(curve, plan, vital, ranges, confidence, feedback_count)
+    user = prompts.morning_condition_user(canonical_body)
     attempts_made = 0
     for attempt in range(deps.max_regen + 1):
         if deps.deadline is not None and not deps.deadline.can_start():
@@ -279,4 +258,4 @@ def _compose(deps, curve, ranges, plan, vital, confidence, feedback_count, facts
         if result.passed:
             return text, False, attempt
         log.log("guardrail_rejected", attempt=attempt, reason=result.reason)
-    return fallback.morning_text(curve, ranges, plan, vital, confidence, feedback_count), True, max(attempts_made - 1, 0)
+    return canonical_body, True, max(attempts_made - 1, 0)

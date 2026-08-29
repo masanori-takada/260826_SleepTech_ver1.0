@@ -28,12 +28,18 @@ BASE_URL = "https://health.googleapis.com/v4"
 
 # --- dailyRollUp 系（POST）: field -> (型ID, camelキー, 値フィールド, キャスト, スケール) ---
 # スケール: APIが返す単位からストア単位への変換係数（通常1.0、体重のみグラム→kg で0.001）
-# next_day_steps / next_day_calories は DailyVital に対応フィールドが無く
-# to_daily_vital() で常に捨てられていたため削除した（Minor: 無駄なAPI呼び出し）。
 _ROLLUP_MAP: dict[str, tuple[str, str, str, type, float]] = {
-    "night_avg_hr": ("heart-rate", "heartRate", "beatsPerMinuteAvg", float, 1.0),
+    "daily_avg_hr": ("heart-rate", "heartRate", "beatsPerMinuteAvg", float, 1.0),
     "weight_kg": ("weight", "weight", "weightGramsAvg", float, 0.001),      # API単位=グラム
     "body_fat_pct": ("body-fat", "bodyFat", "bodyFatPercentageAvg", float, 1.0),
+}
+
+# 朝9:30時点の当日値は未確定なので、活動負荷には確定済みの前日値だけを使う。
+_PRIOR_DAY_ROLLUP_MAP: dict[str, tuple[str, str, str, type, float]] = {
+    "prior_day_steps": ("steps", "steps", "countTotal", int, 1.0),
+    "prior_day_active_calories": (
+        "active-energy-burned", "activeEnergyBurned", "energyKilocaloriesTotal", float, 1.0
+    ),
 }
 
 # --- list 系（GET）: field -> (型ID, camelキー, 値フィールド) ---
@@ -103,6 +109,15 @@ class GoogleHealthApiSource:
                 continue
             raw[field] = self._fetch_rollup(date, type_id, camel, value_field, cast, scale, headers)
 
+        prior_date = _previous_date(date)
+        for field, (type_id, camel, value_field, cast, scale) in _PRIOR_DAY_ROLLUP_MAP.items():
+            if self._budget_exhausted():
+                raw[field] = None
+                continue
+            raw[field] = self._fetch_rollup(
+                prior_date, type_id, camel, value_field, cast, scale, headers
+            )
+
         # list 系（HRV）
         for field, (type_id, camel, value_field) in _LIST_MAP.items():
             if self._budget_exhausted():
@@ -113,8 +128,9 @@ class GoogleHealthApiSource:
         # 睡眠（スコープがあれば取得、無ければ None）
         if self._budget_exhausted():
             raw.update({
-                "total_sleep_min": None, "deep_sleep_min": None, "rem_sleep_min": None,
-                "awakenings": None, "bedtime_h": None, "wake_h": None,
+                "total_sleep_min": None, "light_sleep_min": None, "deep_sleep_min": None,
+                "rem_sleep_min": None, "awakenings": None, "awake_duration_min": None,
+                "sleep_efficiency_pct": None, "bedtime_h": None, "wake_h": None,
             })
         else:
             raw.update(self._fetch_sleep(date, headers))
@@ -186,8 +202,9 @@ class GoogleHealthApiSource:
         全ページを取得してから対象日を探すことで6ヶ月分以上をカバーする。
         """
         empty = {
-            "total_sleep_min": None, "deep_sleep_min": None, "rem_sleep_min": None,
-            "awakenings": None, "bedtime_h": None, "wake_h": None,
+            "total_sleep_min": None, "light_sleep_min": None, "deep_sleep_min": None,
+            "rem_sleep_min": None, "awakenings": None, "awake_duration_min": None,
+            "sleep_efficiency_pct": None, "bedtime_h": None, "wake_h": None,
         }
         all_points: list = []
         next_token = None
@@ -305,6 +322,8 @@ def _derive_sleep_metrics(sleep_block: dict, wake_date: str) -> dict:
     total_min = 0.0
     deep_min = 0.0
     rem_min = 0.0
+    light_min = 0.0
+    awake_min = 0.0
     awakenings = 0
     for i, s in enumerate(stages):
         stype = (s.get("type") or "").upper()
@@ -313,6 +332,7 @@ def _derive_sleep_metrics(sleep_block: dict, wake_date: str) -> dict:
             continue
         dur = _minutes_between(start, end)
         if stype == "AWAKE":
+            awake_min += dur
             if i > 0:  # 先頭の AWAKE は入眠前なので中途覚醒に数えない
                 awakenings += 1
             continue
@@ -321,17 +341,24 @@ def _derive_sleep_metrics(sleep_block: dict, wake_date: str) -> dict:
             deep_min += dur
         elif stype == "REM":
             rem_min += dur
+        elif stype == "LIGHT":
+            light_min += dur
 
     interval = sleep_block.get("interval") or {}
     origin = _origin_midnight(wake_date)
     bedtime_h = _hours_from_origin(interval.get("startTime"), interval.get("startUtcOffset"), origin)
     wake_h = _hours_from_origin(interval.get("endTime"), interval.get("endUtcOffset"), origin)
 
+    stage_total_min = total_min + awake_min
+    efficiency = round(total_min / stage_total_min * 100.0, 1) if stage_total_min > 0 else None
     return {
         "total_sleep_min": int(round(total_min)) if have_stages else None,
+        "light_sleep_min": int(round(light_min)) if have_stages else None,
         "deep_sleep_min": int(round(deep_min)) if have_stages else None,
         "rem_sleep_min": int(round(rem_min)) if have_stages else None,
         "awakenings": awakenings if have_stages else None,
+        "awake_duration_min": int(round(awake_min)) if have_stages else None,
+        "sleep_efficiency_pct": efficiency if have_stages else None,
         "bedtime_h": bedtime_h,
         "wake_h": wake_h,
     }
@@ -343,6 +370,13 @@ def _origin_midnight(wake_date: str):
 
     d = date_cls.fromisoformat(wake_date) - timedelta(days=1)
     return datetime(d.year, d.month, d.day)
+
+
+def _previous_date(value: str) -> str:
+    """ISO日付の前日を返す。"""
+    from datetime import date as date_cls, timedelta
+
+    return (date_cls.fromisoformat(value) - timedelta(days=1)).isoformat()
 
 
 def _hours_from_origin(iso_utc: str | None, offset_str: str | None, origin) -> float | None:

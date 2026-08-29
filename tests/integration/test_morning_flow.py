@@ -139,6 +139,37 @@ def test_saves_prediction_with_curve():
     assert pred.recovery["caffeine_cutoff_h"] is not None
 
 
+def test_morning_line_uses_domain_summary_but_keeps_full_curve_in_memory():
+    """LINEは簡潔な領域表示、DynamoDB用予測は16時間分を保持する。"""
+    memory = _memory()
+    push = FakePushClient()
+    source = FakeHealthSource(raw={
+        "total_sleep_min": 316,
+        "deep_sleep_min": 99,
+        "rem_sleep_min": 74,
+        "awakenings": 3,
+        "awake_duration_min": 24,
+        "sleep_efficiency_pct": 78.0,
+        "bedtime_h": 25.3,
+        "wake_h": 31.0,
+        "hrv": 38.0,
+    })
+
+    morning.run_morning(
+        DATE, _deps(memory=memory, source=source, llm=NullClient(), push=push)
+    )
+
+    text = push.sent[0]["text"]
+    assert "今日のコンディション" in text
+    assert "集中力" in text
+    assert "睡眠回復" in text
+    assert "中途覚醒3回/24分" in text
+    assert "生体変化" not in text
+    assert "現行の%計算には使っていません" not in text
+    assert len([line for line in text.splitlines() if "時台 低下見込み" in line]) <= 1
+    assert len(memory.get_prediction(DATE, "MORNING").curve) == 16
+
+
 def test_recovery_uses_target_sleep_not_short_habit(monkeypatch):
     """習慣5.4時間・目標7時間なら今夜の就寝目安を96分早める。"""
     captured = {}
@@ -165,22 +196,15 @@ def test_recovery_uses_target_sleep_not_short_habit(monkeypatch):
     assert captured["bedtime_h"] == pytest.approx(31.0 + (24.0 - 7.0))
 
 
-def test_saved_curve_reproduces_each_displayed_calibrated_range(monkeypatch):
-    captured = {}
-    original = morning.prompts.morning_user
-
-    def spy(curve, plan, vital, ranges=None, confidence=None, feedback_count=None):
-        captured["ranges"] = ranges
-        return original(curve, plan, vital, ranges, confidence, feedback_count)
-
-    monkeypatch.setattr(morning.prompts, "morning_user", spy)
+def test_saved_curve_keeps_each_calibrated_range():
+    """LINEで省略しても、監査用カーブには各時間帯の幅を保持する。"""
     memory = _memory()
     morning.run_morning(DATE, _deps(memory=memory, llm=NullClient()))
     pred = memory.get_prediction(DATE, "MORNING")
-    assert len(pred.curve) == len(captured["ranges"]) == 16
-    for row, (low, high) in zip(pred.curve, captured["ranges"]):
+    assert len(pred.curve) == 16
+    for row in pred.curve:
         assert set(("hour", "raw_focus_pct", "focus_pct", "mood_pct", "range_low_pct", "range_high_pct")) <= row.keys()
-        assert (row["range_low_pct"], row["range_high_pct"]) == (low, high)
+        assert row["range_low_pct"] <= row["focus_pct"] <= row["range_high_pct"]
 
 
 def test_morning_applies_offset_only_to_focus_curve():
@@ -216,7 +240,7 @@ def test_falls_back_to_template_when_llm_fails():
     push = FakePushClient()
     got = morning.run_morning(DATE, _deps(llm=NullClient(), push=push))
     assert got["used_fallback"] is True
-    assert "☕" in push.sent[0]["text"]
+    assert "今日のリカバリー" in push.sent[0]["text"]
 
 
 def test_fallback_text_marks_the_dip_in_the_main_window_not_at_wake_time():
@@ -230,9 +254,9 @@ def test_fallback_text_marks_the_dip_in_the_main_window_not_at_wake_time():
     got = morning.run_morning(DATE, _deps(llm=NullClient(), push=push))
     assert got["used_fallback"] is True
     text = push.sent[0]["text"]
-    marked = [line for line in text.splitlines() if "← 谷" in line]
+    marked = [line for line in text.splitlines() if "が谷" in line and "集中力" in line]
     assert len(marked) == 1
-    hour = int(marked[0].strip().split("時台")[0])
+    hour = int(marked[0].split("］", 1)[1].split("時台", 1)[0])
     assert hour not in (7, 8)  # 起床（7時）・起床+1h（8時）には付かない
     assert 9 <= hour <= 17     # 起床+2h 〜 +10h
 

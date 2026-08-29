@@ -104,6 +104,14 @@ def test_derives_total_and_deep_sleep():
     assert got["deep_sleep_min"] == 60
 
 
+def test_derives_light_awake_and_sleep_efficiency():
+    """睡眠構成と回復評価に使う派生値を返す。"""
+    got = _derive_sleep_metrics(SLEEP_BLOCK, wake_date="2026-08-27")
+    assert got["light_sleep_min"] == 310
+    assert got["awake_duration_min"] == 10
+    assert got["sleep_efficiency_pct"] == 97.8
+
+
 def test_counts_awakenings_excluding_the_first_stage():
     got = _derive_sleep_metrics(SLEEP_BLOCK, wake_date="2026-08-27")
     assert got["awakenings"] == 1
@@ -245,7 +253,9 @@ def test_fetch_raw_skips_all_requests_when_deadline_already_exhausted():
     raw = source.fetch_raw("2026-08-27")
 
     assert calls == {"post": 0, "get": 0}
-    assert raw["night_avg_hr"] is None
+    assert raw["daily_avg_hr"] is None
+    assert raw["prior_day_steps"] is None
+    assert raw["prior_day_active_calories"] is None
     assert raw["hrv"] is None
     assert raw["total_sleep_min"] is None
     assert raw["wake_h"] is None
@@ -283,9 +293,8 @@ def test_fetch_raw_without_deadline_is_unaffected_backward_compat():
     source = GoogleHealthApiSource(lambda: "token", http_post=post, http_get=lambda u, h: {"dataPoints": []})
     source.fetch_raw("2026-08-27")
 
-    assert calls["post"] == len(
-        __import__("sleeptech.collectors.google_health_api", fromlist=["_ROLLUP_MAP"])._ROLLUP_MAP
-    )
+    module = __import__("sleeptech.collectors.google_health_api", fromlist=["_ROLLUP_MAP"])
+    assert calls["post"] == len(module._ROLLUP_MAP) + len(module._PRIOR_DAY_ROLLUP_MAP)
 
 
 def test_default_http_timeout_is_short_enough_for_morning_fn_deadline():
@@ -295,13 +304,36 @@ def test_default_http_timeout_is_short_enough_for_morning_fn_deadline():
     assert gha.HTTP_TIMEOUT_SEC <= 5.0
 
 
-def test_rollup_map_no_longer_fetches_unused_next_day_fields():
-    """Minor: next_day_steps / next_day_calories は DailyVital に対応フィールドが
-    無く常に捨てられていたため削除した（無駄なAPI呼び出しの削減）。"""
+def test_rollup_maps_fetch_daily_heart_and_previous_day_activity():
+    """心拍の意味を明示し、朝時点で確定した前日活動量を取得する。"""
     from sleeptech.collectors import google_health_api as gha
 
-    assert "next_day_steps" not in gha._ROLLUP_MAP
-    assert "next_day_calories" not in gha._ROLLUP_MAP
+    assert "daily_avg_hr" in gha._ROLLUP_MAP
+    assert "night_avg_hr" not in gha._ROLLUP_MAP
+    assert "prior_day_steps" in gha._PRIOR_DAY_ROLLUP_MAP
+    assert "prior_day_active_calories" in gha._PRIOR_DAY_ROLLUP_MAP
+
+
+def test_previous_day_activity_rollups_use_day_before_wake_date():
+    requested_ranges = []
+
+    def post(url, headers, body):
+        requested_ranges.append((url, body["range"]["start"]["date"]))
+        return {"rollupDataPoints": []}
+
+    source = GoogleHealthApiSource(
+        lambda: "token", http_post=post, http_get=lambda u, h: {"dataPoints": []}
+    )
+    source.fetch_raw("2026-08-27")
+
+    activity_dates = [
+        d for url, d in requested_ranges
+        if "/steps/" in url or "/active-energy-burned/" in url
+    ]
+    assert activity_dates == [
+        {"year": 2026, "month": 8, "day": 26},
+        {"year": 2026, "month": 8, "day": 26},
+    ]
 
 
 def test_to_daily_vital_shifts_date_back_by_one_day():

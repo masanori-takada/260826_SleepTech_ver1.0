@@ -102,17 +102,25 @@ class DailyVital:
 
     date: str
     total_sleep_min: int | None = None
+    light_sleep_min: int | None = None
     deep_sleep_min: int | None = None
     rem_sleep_min: int | None = None
     awakenings: int | None = None
+    awake_duration_min: int | None = None
+    sleep_efficiency_pct: float | None = None
     bedtime_h: float | None = None
     wake_h: float | None = None
     hrv: float | None = None
     skin_temp_delta: float | None = None
     respiration_rate: float | None = None
     night_avg_hr: float | None = None
+    daily_avg_hr: float | None = None
+    sleep_avg_hr: float | None = None
+    heart_rate_source: str | None = None
     weight_kg: float | None = None
     body_fat_pct: float | None = None
+    prior_day_steps: int | None = None
+    prior_day_active_calories: float | None = None
     ingested_at: str | None = None
 
     @property
@@ -150,7 +158,11 @@ class DailyVital:
     @classmethod
     def from_dict(cls, d: dict) -> DailyVital:
         known = {f for f in cls.__dataclass_fields__}
-        return cls(**{k: v for k, v in d.items() if k in known})
+        instance = cls(**{k: v for k, v in d.items() if k in known})
+        if instance.daily_avg_hr is None and instance.night_avg_hr is not None:
+            instance.daily_avg_hr = instance.night_avg_hr
+            instance.heart_rate_source = instance.heart_rate_source or "legacy_daily_rollup"
+        return instance
 
 
 @dataclass
