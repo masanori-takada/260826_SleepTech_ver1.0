@@ -165,6 +165,13 @@ class MemoryClient:
         """仕様 第9節 MSG#NIGHT / MSG#MORNING。送信した本文と検証結果を記録する。"""
         self._backend.put(_pk_message(msg.slot), msg.date, msg.to_dict())
 
+    def get_messages_desc(self, slot: str, limit: int) -> list[Message]:
+        """新しい順にメッセージを返す（judge スコアの推移を追うため）。"""
+        return [
+            Message.from_dict(raw)
+            for raw in self._backend.query_desc(_pk_message(slot), limit)
+        ]
+
     def get_message(self, date: str, slot: str) -> Message | None:
         raw = self._backend.get(_pk_message(slot), date)
         return Message.from_dict(raw) if raw else None

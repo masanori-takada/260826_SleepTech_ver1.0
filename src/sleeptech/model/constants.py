@@ -60,3 +60,14 @@ CAFFEINE_PRE_DIP_H = 1.5          # 2回目 = 午後の谷 - このオフセッ�
 LIGHT_MORNING_WITHIN_MIN = 30   # 起床後この分数以内に屋外光
 LIGHT_MORNING_DURATION_MIN = 10
 LIGHT_AVOID_BEFORE_BED_H = 3.0  # 就寝の何時間前から避光するか
+
+# リカバリー提案の時刻メニュー（領域の課題に対して「何時に」を出すための基準）
+FOCUS_BLOCK_OFFSET_H = 3.0      # 重要作業に向く時間帯 = 起床 + このオフセット
+NAP_BEFORE_DIP_H = 0.5          # 仮眠は集中力の谷の何時間前に置くか
+NAP_EARLIEST_OFFSET_H = 4.0     # 仮眠は起床からこの時間より前には置かない
+EXERCISE_BEFORE_BED_H = 4.0     # 運動は就寝の何時間前までにするか
+EXERCISE_EARLIEST_OFFSET_H = 2.0  # 運動は起床からこの時間より前には置かない
+MEAL_BEFORE_BED_H = 3.0         # 夕食は就寝の何時間前までに終えるか
+BATH_BEFORE_BED_H = 1.5         # 入浴は就寝の何時間前に終えるか
+WINDDOWN_BEFORE_BED_H = 1.0     # 活動を落とし始めるのは就寝の何時間前か
+

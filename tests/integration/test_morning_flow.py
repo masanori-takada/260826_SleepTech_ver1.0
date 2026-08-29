@@ -276,18 +276,67 @@ def test_no_exception_for_various_sleep_durations():
         assert len(push.sent) == 1
 
 
-class EchoLlm:
-    """プロンプト（morning_user）が列挙する確定値をそのまま本文として返す偽 LLM。
+_MATERIAL_HEAD = "【リカバリー提案の材料】"
+_JUDGE_MARK = "評価者"
 
-    morning_user はすべての時刻・低下率を既にガードレール互換の表記
-    （時刻は fmt_hm_plain、低下率は符号付き "-N%"）で出力しているため、
-    それをそのまま返し、必須の「目安」注記だけ加えれば検証を通る。
-    LLM 成功経路（used_fallback=False）が Facts.percents の求め方を
-    変えた後も引き続き通ることを確認するために使う。
+
+def _section_from_material(material: str, times_per_line: int = 1) -> str:
+    """材料に載った領域と時刻から、契約どおりのリカバリー節を組み立てる。"""
+    import re
+
+    lines = ["今日のリカバリー"]
+    label = None
+    for line in material.splitlines():
+        head = re.match(r"^■ (?P<label>[^［]+)［", line)
+        if head is not None:
+            label = head.group("label").strip()
+            continue
+        if label is not None and "使ってよい時刻" in line:
+            found = re.findall(r"\d{1,2}:\d{2}", line)[:times_per_line]
+            body = "と".join(found) + "に決めた手順を実行する"
+            lines.append(f"・{label}：{body}")
+            label = None
+    return "\n".join(lines)
+
+
+class RecoveryLlm:
+    """生成と採点を1つのクライアントで返し分ける偽LLM。
+
+    system に評価者プロンプトの目印が含まれていれば採点、そうでなければ生成。
     """
 
+    def __init__(self, section=None, scores=(5, 5, 5, 5), judge_text=None,
+                 judge_error=None):
+        self.section = section
+        self.scores = scores
+        self.judge_text = judge_text
+        self.judge_error = judge_error
+        self.generated = []
+        self.judged = []
+        self.calls = []
+
+    def _judge_payload(self) -> str:
+        import json
+
+        relevance, actionability, time_fit, tone = self.scores
+        return json.dumps({
+            "relevance": relevance, "actionability": actionability,
+            "time_fit": time_fit, "tone": tone, "reason": "テスト",
+        }, ensure_ascii=False)
+
     def complete(self, system: str, user: str) -> str:
-        return user + "\n推定の目安です。"
+        self.calls.append((system, user))
+        if _JUDGE_MARK in system:
+            self.judged.append(user)
+            if self.judge_error is not None:
+                raise self.judge_error
+            return self.judge_text if self.judge_text is not None else self._judge_payload()
+        self.generated.append(user)
+        if callable(self.section):
+            return self.section(user, len(self.generated))
+        if self.section is not None:
+            return self.section
+        return _section_from_material(user)
 
 
 class OldBaselineNoteLlm:
@@ -304,48 +353,33 @@ def test_old_baseline_note_is_rejected_in_production_llm_path():
     assert result["used_fallback"] is True
 
 
-def test_llm_success_path_still_passes_after_percents_change():
-    """Facts.percents の求め方を変えても、LLM 成功経路（used_fallback=False）が
-    引き続き通ることを確認する（プロンプトの指示に従って文面を組み立てる
-    偽 LLM を注入）。
-    """
+def test_llm_success_path_sends_the_generated_recovery_section():
+    """契約どおりの節を返せば、そのまま送信される。"""
     push = FakePushClient()
-    got = morning.run_morning(DATE, _deps(llm=EchoLlm(), push=push))
+    llm = RecoveryLlm()
+
+    got = morning.run_morning(DATE, _deps(llm=llm, push=push))
+
     assert got["used_fallback"] is False
     assert len(push.sent) == 1
+    assert "今日のリカバリー" in push.sent[0]["text"]
+    assert len(llm.generated) == 1 and len(llm.judged) == 1
 
 
-class ParaphrasingLlm:
-    """自然な言い換え（「13時から15時にかけて」形式）で時刻を書く偽 LLM。
+def test_japanese_time_notation_in_recovery_is_accepted():
+    """「15時30分」のような和文表記でも、正規化して同じ時刻なら受理する。"""
+    import re
 
-    I7: allowed_times にカーブの時刻が入っていないと、この言い換えが
-    「捏造」として弾かれ、LLM 経路が不必要に不安定になっていた。
-    必須の谷（-16%、既定の FakeHealthSource では起床+7h=14時）は数値として
-    別途本文に含める（percents の必須チェックとは独立に times だけを検証したいため）。
-    """
+    def as_japanese(material: str, _n: int) -> str:
+        section = _section_from_material(material)
+        return re.sub(
+            r"(\d{1,2}):(\d{2})",
+            lambda m: f"{int(m.group(1))}時{int(m.group(2))}分",
+            section,
+        )
 
-    def __init__(self, hour_a: int, hour_b: int, required_pct: int) -> None:
-        self.hour_a = hour_a
-        self.hour_b = hour_b
-        self.required_pct = required_pct
+    got = morning.run_morning(DATE, _deps(llm=RecoveryLlm(section=as_japanese)))
 
-    def complete(self, system: str, user: str) -> str:
-        # 必須値（カフェイン推奨・最終摂取・朝光・避光の各時刻）はそのまま含めつつ、
-        # 谷の時間帯だけ「〜時から〜時にかけて」という自然な言い換えにする。
-        return user + "\n推定の目安です。"
-
-
-def test_curve_hour_paraphrase_is_not_rejected_as_fabrication():
-    """I7: カーブの時刻を「〜時から〜時にかけて」と言い換えても弾かれない。
-
-    既定の FakeHealthSource（wake_h=31.0 → 起床7時、主要時間帯の谷は14時=-16%）
-    のカーブは起床時刻から CURVE_HOURS 時間分連番になるため、13時・15時は
-    カーブの範囲内（allowed_times にカーブ由来の時刻を加えていないと弾かれる）。
-    """
-    memory = _memory()
-    push = FakePushClient()
-    llm = ParaphrasingLlm(13, 15, required_pct=16)
-    got = morning.run_morning(DATE, _deps(memory=memory, llm=llm, push=push))
     assert got["used_fallback"] is False
 
 
@@ -416,71 +450,207 @@ def test_afternoon_shows_a_local_dip_after_short_sleep():
     assert by_hour[14] > by_hour[10]
 
 
-# --- リカバリーをLLMが組み立てる経路 ---
+# --- リカバリーは対象領域と1:1、judge が品質を採点する ---
 
 
-class RecoveryWritingLlm:
-    """確定部をそのまま残し、リカバリーを自分で書く偽LLM。"""
+def _targets_for(date: str = DATE) -> int:
+    """このテストデータで対象になる領域の数を求める。"""
+    from sleeptech.model import condition as cn
 
-    def __init__(self, recovery_lines: tuple[str, ...]) -> None:
-        self.recovery_lines = recovery_lines
-        self.calls = []
-
-    def complete(self, system: str, user: str) -> str:
-        self.calls.append((system, user))
-        condition = user.split("【リカバリー提案の材料】")[0].rstrip()
-        return "\n".join([condition, "", "今日のリカバリー", *self.recovery_lines])
+    memory = _memory()
+    llm = RecoveryLlm()
+    morning.run_morning(date, _deps(memory=memory, llm=llm))
+    material = llm.generated[0]
+    return material.count("■ ")
 
 
-def test_llm_writes_its_own_recovery_actions():
-    """領域評価を踏まえた自由なリカバリー策が本文として通る。"""
+def test_recovery_has_one_line_per_attention_domain():
+    """提案は対象領域と同数・同順で、各行に時刻が入る。"""
+    import re
+
     push = FakePushClient()
-    llm = RecoveryWritingLlm((
-        "・肩甲骨を大きく5回まわして血流を戻す",
-        "・昼はラジオ体操で体を起こす",
-        "・深呼吸をゆっくり繰り返す",
-    ))
+    llm = RecoveryLlm()
 
-    got = morning.run_morning(DATE, _deps(llm=llm, push=push))
+    morning.run_morning(DATE, _deps(llm=llm, push=push))
 
-    assert got["used_fallback"] is False
+    material = llm.generated[0]
+    expected = material.count("■ ")
     text = push.sent[0]["text"]
-    assert "肩甲骨" in text
-    assert "ラジオ体操" in text
+    section = text.split("今日のリカバリー")[1].strip().splitlines()
+    assert len(section) == expected
+    assert all(re.search(r"\d{1,2}:\d{2}", line) for line in section)
 
 
-def test_llm_receives_domain_levels_as_recovery_material():
-    """LLMには領域別の評価レベルが材料として渡る。"""
-    llm = RecoveryWritingLlm(("・首をゆっくり倒して力を抜く",))
+def test_material_lists_only_attention_and_rest_domains():
+    """材料に載るのは［注意］［要休養］の領域だけ。"""
+    llm = RecoveryLlm()
 
     morning.run_morning(DATE, _deps(llm=llm))
 
-    _, user = llm.calls[0]
-    assert "【リカバリー提案の材料】" in user
-    assert "集中力：" in user
-    assert "使ってよい時刻" in user
+    material = llm.generated[0]
+    assert "［注意］" in material or "［要休養］" in material
+    assert "［良好］" not in material
+    assert "［通常］" not in material
 
 
-def test_recovery_with_unoffered_time_is_rejected():
-    """材料にない時刻を書いたリカバリーは捏造として弾く。"""
+def test_wrong_number_of_items_is_rejected():
+    """対象領域より多く書いたら構造検査で弾く。"""
     push = FakePushClient()
-    llm = RecoveryWritingLlm(("・3:07に起きて散歩する",))
+
+    def too_many(material: str, _n: int) -> str:
+        section = _section_from_material(material)
+        return section + "\n・おまけ：7:30に何かする"
+
+    got = morning.run_morning(DATE, _deps(llm=RecoveryLlm(section=too_many), push=push))
+
+    assert got["used_fallback"] is True
+    assert "おまけ" not in push.sent[0]["text"]
+
+
+def test_line_without_a_time_is_rejected():
+    """「何時に」が無い行は弾く。"""
+    def no_time(material: str, _n: int) -> str:
+        import re
+
+        return re.sub(r"\d{1,2}:\d{2}と?", "", _section_from_material(material))
+
+    got = morning.run_morning(DATE, _deps(llm=RecoveryLlm(section=no_time)))
+
+    assert got["used_fallback"] is True
+
+
+def test_time_from_another_domain_is_rejected():
+    """その領域に提示していない時刻は使えない。"""
+    def borrowed(material: str, _n: int) -> str:
+        lines = _section_from_material(material).splitlines()
+        lines[1] = lines[1].split("：")[0] + "：23:59に何かする"
+        return "\n".join(lines)
+
+    got = morning.run_morning(DATE, _deps(llm=RecoveryLlm(section=borrowed)))
+
+    assert got["used_fallback"] is True
+
+
+def test_no_recovery_section_and_no_llm_call_when_nothing_needs_attention():
+    """対象0件の日はリカバリー節を出さず、LLMも呼ばない。"""
+    memory = _memory()
+    source = FakeHealthSource({
+        "total_sleep_min": 430, "deep_sleep_min": 90, "rem_sleep_min": 95,
+        "awakenings": 1, "bedtime_h": 23.5, "wake_h": 31.0, "hrv": 45.0,
+    })
+    llm = RecoveryLlm()
+    push = FakePushClient()
+
+    got = morning.run_morning(
+        DATE, _deps(memory=memory, source=source, llm=llm, push=push)
+    )
+
+    assert got["judge_status"] == "skipped"
+    assert llm.calls == []
+    assert "今日のリカバリー" not in push.sent[0]["text"]
+    assert got["used_fallback"] is False
+
+
+# --- judge のゲート挙動 ---
+
+
+def test_judge_passes_on_the_first_candidate():
+    """閾値を超えたら即採用し、再生成しない。"""
+    llm = RecoveryLlm(scores=(5, 5, 5, 5))
+
+    got = morning.run_morning(DATE, _deps(llm=llm))
+
+    assert got["judge_status"] == "passed"
+    assert got["judge_total"] == 100
+    assert len(llm.generated) == 1
+
+
+def test_low_scores_send_the_best_candidate():
+    """閾値に届かなくても、最高点の案を送る。"""
+    scores = iter([(3, 3, 3, 3), (4, 3, 3, 3), (2, 2, 2, 2)])
+    llm = RecoveryLlm()
+    push = FakePushClient()
+
+    def judge_next():
+        relevance, actionability, time_fit, tone = next(scores)
+        import json
+
+        return json.dumps({
+            "relevance": relevance, "actionability": actionability,
+            "time_fit": time_fit, "tone": tone,
+        })
+
+    llm._judge_payload = judge_next
 
     got = morning.run_morning(DATE, _deps(llm=llm, push=push))
 
-    assert got["used_fallback"] is True
-    assert "3:07" not in push.sent[0]["text"]
+    assert got["judge_status"] == "best_of"
+    assert got["used_fallback"] is False
+    assert got["judge_total"] == 67  # (4,3,3,3) が最高点
+    assert "今日のリカバリー" in push.sent[0]["text"]
 
 
-def test_fallback_body_still_carries_recovery_actions():
-    """LLMが落ちてもリカバリー節は決定論的に届く。"""
+def test_vetoed_candidates_fall_back_but_keep_a_recovery_section():
+    """0点の軸がある案は採用しない。それでもリカバリー節は消さない。"""
     push = FakePushClient()
+    llm = RecoveryLlm(scores=(0, 5, 5, 5))
 
-    morning.run_morning(DATE, _deps(llm=StubLlm(), push=push))
+    got = morning.run_morning(DATE, _deps(llm=llm, push=push))
 
-    text = push.sent[0]["text"]
-    assert "今日のコンディション" in text
-    assert "今日のリカバリー" in text
+    assert got["judge_status"] == "vetoed"
+    assert got["used_fallback"] is True
+    assert "今日のリカバリー" in push.sent[0]["text"]
+
+
+def test_judge_failure_sends_the_guardrail_passed_candidate():
+    """judge が落ちても、決定論的検査を通った案はそのまま送る（fail-open）。"""
+    from sleeptech.llm.client import LlmError
+
+    push = FakePushClient()
+    llm = RecoveryLlm(judge_error=LlmError("judge down"))
+
+    got = morning.run_morning(DATE, _deps(llm=llm, push=push))
+
+    assert got["judge_status"] == "unavailable"
+    assert got["judge_total"] is None
+    assert got["used_fallback"] is False
+    assert "今日のリカバリー" in push.sent[0]["text"]
+
+
+def test_unparsable_judge_output_is_treated_as_unavailable():
+    """採点結果が読めないときも fail-open。"""
+    llm = RecoveryLlm(judge_text="採点できません")
+
+    got = morning.run_morning(DATE, _deps(llm=llm))
+
+    assert got["judge_status"] == "unavailable"
+    assert got["used_fallback"] is False
+
+
+def test_judge_does_not_see_the_sleep_record():
+    """採点入力には睡眠実績を渡さない（採点が睡眠の良し悪しに引きずられないため）。"""
+    llm = RecoveryLlm()
+
+    morning.run_morning(DATE, _deps(llm=llm))
+
+    judged = llm.judged[0]
+    assert "今日のリカバリー" in judged
+    assert "昨夜：" not in judged
+    assert "深睡眠" not in judged
+
+
+def test_judge_scores_are_saved_with_the_message():
+    """スコアを保存し、後から推移を追える。"""
+    memory = _memory()
+    llm = RecoveryLlm(scores=(4, 4, 4, 4))
+
+    morning.run_morning(DATE, _deps(memory=memory, llm=llm))
+
+    msg = memory.get_message(DATE, "MORNING")
+    assert msg.judge_total == 80
+    assert msg.judge_scores["relevance"] == 4
+    assert msg.judge_status == "passed"
+    assert memory.get_messages_desc("MORNING", 5)[0].judge_total == 80
 
 
 def test_morning_message_has_no_ability_note():
@@ -492,32 +662,12 @@ def test_morning_message_has_no_ability_note():
     assert "実測の仕事能力ではありません" not in push.sent[0]["text"]
 
 
-class MaterialTimeLlm:
-    """材料に載っている時刻を1つ拾ってリカバリーに使う偽LLM。"""
-
-    def __init__(self) -> None:
-        self.used_time = None
-
-    def complete(self, system: str, user: str) -> str:
-        import re
-
-        condition, material = user.split("【リカバリー提案の材料】")
-        self.used_time = re.search(r"\d{1,2}:\d{2}", material).group(0)
-        return "\n".join([
-            condition.rstrip(),
-            "",
-            "今日のリカバリー",
-            f"・{self.used_time}までに外の光を浴びる",
-            "・ふくらはぎを伸ばして足元を温める",
-        ])
-
-
-def test_recovery_may_use_times_offered_in_the_material():
-    """材料として渡した時刻はリカバリー文で使える。"""
+def test_fallback_body_still_carries_recovery_actions():
+    """LLMが落ちてもリカバリー節は決定論的に届く。"""
     push = FakePushClient()
-    llm = MaterialTimeLlm()
 
-    got = morning.run_morning(DATE, _deps(llm=llm, push=push))
+    morning.run_morning(DATE, _deps(llm=StubLlm(), push=push))
 
-    assert got["used_fallback"] is False
-    assert llm.used_time in push.sent[0]["text"]
+    text = push.sent[0]["text"]
+    assert "今日のコンディション" in text
+    assert "今日のリカバリー" in text

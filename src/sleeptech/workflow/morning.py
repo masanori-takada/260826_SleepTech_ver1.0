@@ -15,6 +15,8 @@ from datetime import timedelta
 from sleeptech.collectors import ConsentRevokedError
 from sleeptech.collectors import vitals as vt
 from sleeptech.guardrail import validator as gv
+from sleeptech.llm.client import ATTEMPT_TIMEOUT_SEC
+from sleeptech.llm import judge as jg
 from sleeptech.llm import prompts
 from sleeptech.memory.schemas import Prediction
 from sleeptech.model import baseline as bl
@@ -31,6 +33,9 @@ from sleeptech.workflow._common import save_message as _save_message
 from sleeptech.workflow._calibration import load_calibration
 
 SLOT = "MORNING"
+
+# 1ラウンド = リカバリー生成 + 採点。両方ぶんの実行時間を先に確保する。
+_ROUND_BUDGET_SEC = ATTEMPT_TIMEOUT_SEC * 2
 
 _NO_DATA_TEXT = (
     "おはようございます。今朝は睡眠データを取得できませんでした。\n"
@@ -136,21 +141,22 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
     condition_report = cn.assess_conditions(
         vital, history, curve, ranges, baseline.effective_target_sleep_h
     )
-    # 確定部（睡眠実績・領域評価）だけをガードレールの必須行にし、
-    # リカバリーはLLMが領域評価を踏まえて組み立てる。数値の捏造は
-    # allowed_times で禁じ、材料として渡した時刻だけを許可する。
+    # リカバリーは［注意］［要休養］の領域だけに1:1で出す。時刻メニューは
+    # 予測カーブが示した実際の谷から組み立て、LLMにはそこから選ばせる。
     condition_body = cn.render_condition_section(condition_report, vital)
-    fallback_body = cn.render_morning_report(condition_report, vital, plan)
-    recovery_material = cn.build_recovery_material(condition_report, plan)
+    targets = cn.recovery_targets(condition_report)
+    times = rc.times(
+        vital.wake_h, next_bedtime_h, _dip_h(condition_report, vital.wake_h), plan
+    )
     required_lines = tuple(
         line.rstrip("。．") for line in condition_body.splitlines() if line.strip()
     )
     facts = gv.Facts(
         required_phrases=required_lines,
-        allowed_times=list(cn.recovery_time_materials(plan)),
+        allowed_times=list(cn.recovery_time_materials(targets, times)),
     )
-    body, used_fallback, regen_count = _compose(
-        deps, condition_body, recovery_material, fallback_body, facts, log,
+    body, used_fallback, regen_count, judge_record = _compose(
+        deps, condition_body, targets, times, facts, log,
     )
 
     # push の例外はここで捕捉せず伝播させる。送信していないのに mark_notified して
@@ -210,6 +216,7 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
         regen_count=regen_count,
         delivered=True,
         log=log,
+        judge=judge_record,
     )
 
     return {
@@ -217,6 +224,8 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
         "skipped": False,
         "consent_revoked": False,
         "has_sleep": True,
+        "judge_status": judge_record["judge_status"],
+        "judge_total": judge_record["judge_total"],
         "mean_drop_pct": calibrated_mean,
         "range_low_pct": mean_low,
         "range_high_pct": mean_high,
@@ -239,32 +248,105 @@ def _mark_notified(deps: MorningDeps, date: str, log: StructuredLogger) -> None:
         log.log("mark_notified_failed", error=str(exc))
 
 
-def _compose(
-    deps, condition_body, recovery_material, fallback_body, facts, log
-) -> tuple[str, bool, int]:
-    """LLM で文章化し検証する。通らなければテンプレート文を返す。
+def _dip_h(report, wake_h: float) -> float:
+    """集中力の谷の時刻。カーブのインデックスは起床からの経過時間に対応する。"""
+    for assessment in report.displayed_assessments:
+        if assessment.domain == "focus" and assessment.dip_index is not None:
+            return wake_h + float(assessment.dip_index)
+    return wake_h + C.PHASE_DIP_OFFSET_H
 
-    戻り値の3つめは regen_count（ガードレール不通過による再試行回数。
-    最初の1回は含まない）。
 
-    M2対応: 以前はフォールバック時に常に deps.max_regen を返していたため、
-    LLM が初回で例外を投げてbreakした場合（実際には1回も再試行していない）
-    でも regen_count=2（max_regen）という不正確な値が記録されていた。
-    実際に試行した回数（attempts_made）から数える。
+def _judge_record(status: str, score, attempts: int) -> dict:
+    """Message へ保存する judge の記録。"""
+    return {
+        "judge_status": status,
+        "judge_total": None if score is None else score.total,
+        "judge_scores": {} if score is None else score.as_dict(),
+        "judge_attempts": attempts,
+        "judge_reason": "" if score is None else score.reason,
+    }
+
+
+def _compose(deps, condition_body, targets, times, facts, log):
+    """リカバリー節を生成し、構造・ガードレール・judge の順に検査する。
+
+    戻り値は (本文, フォールバックか, 再生成回数, judgeの記録)。
+
+    judge は品質の判定であって安全の判定ではない。構造検査とガードレールを
+    通った案は既に送っても害がないため、judge が使えないときは fail-open で
+    そのまま送る。判定できたうえで0点の軸があったときだけ拒否する。
     """
-    user = prompts.morning_condition_user(condition_body, recovery_material)
+    if not targets:
+        # 出す対象が無い日はLLMを呼ばない。書くことが無いうえ、
+        # 8秒とガードレール不合格のリスクを払うだけになる。
+        log.log("recovery_skipped", reason="no_target_domain")
+        return condition_body, False, 0, _judge_record("skipped", None, 0)
+
+    material = cn.build_recovery_material(targets, times)
+    expected = cn.recovery_domain_times(targets, times)
+    domain_lines = tuple(
+        f"{label}［{assessment.level}］{assessment.headline}"
+        for label, assessment in zip(
+            (pair[0] for pair in expected), targets
+        )
+    )
+    user = prompts.morning_recovery_user(material)
+
+    best_body = None
+    best_score = None
     attempts_made = 0
+    judged = 0
     for attempt in range(deps.max_regen + 1):
-        if deps.deadline is not None and not deps.deadline.can_start():
+        # 生成と採点で2回LLMを呼ぶ。採点できない案を作っても捨てるだけなので、
+        # 2回ぶんの予算が残っているときだけ次のラウンドを始める。
+        if deps.deadline is not None and not deps.deadline.can_start(_ROUND_BUDGET_SEC):
             break
         attempts_made = attempt + 1
         try:
-            text = deps.llm_client.complete(prompts.MORNING_SYSTEM, user)
+            section = deps.llm_client.complete(prompts.MORNING_SYSTEM, user)
         except Exception as exc:  # noqa: BLE001 — LLM 障害は必ずフォールバックへ
             log.log("llm_failed", error=str(exc))
             break
-        result = gv.validate(text, facts)
-        if result.passed:
-            return text, False, attempt
-        log.log("guardrail_rejected", attempt=attempt, reason=result.reason)
-    return fallback_body, True, max(attempts_made - 1, 0)
+
+        structure = gv.validate_recovery_structure(section, expected)
+        if not structure.passed:
+            log.log("guardrail_rejected", attempt=attempt, reason=structure.reason)
+            continue
+        candidate = "\n\n".join([condition_body, section.strip()])
+        result = gv.validate(candidate, facts)
+        if not result.passed:
+            log.log("guardrail_rejected", attempt=attempt, reason=result.reason)
+            continue
+
+        score = jg.score_recovery(
+            deps.llm_client,
+            prompts.JUDGE_SYSTEM,
+            prompts.judge_user(domain_lines, section.strip()),
+            log,
+        )
+        if score is None:
+            # 判定できなかった。決定論的な検査は通っているのでそのまま送る。
+            return candidate, False, attempt, _judge_record("unavailable", None, judged)
+        judged += 1
+        log.log(
+            "judge_scored", attempt=attempt, total=score.total,
+            eligible=score.eligible, **score.as_dict(),
+        )
+        if not score.eligible:
+            continue
+        if score.total >= jg.PASS_SCORE:
+            return candidate, False, attempt, _judge_record("passed", score, judged)
+        if best_score is None or score.total > best_score.total:
+            best_body, best_score = candidate, score
+
+    if best_body is not None:
+        # 閾値に届かなくても、リカバリー節が消えるより最高点を送るほうがよい。
+        return best_body, False, max(attempts_made - 1, 0), _judge_record(
+            "best_of", best_score, judged
+        )
+
+    fallback = "\n\n".join([
+        condition_body, cn.render_recovery_section(targets, times),
+    ])
+    status = "vetoed" if judged else "unavailable"
+    return fallback, True, max(attempts_made - 1, 0), _judge_record(status, None, judged)

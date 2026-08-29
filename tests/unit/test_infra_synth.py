@@ -177,6 +177,16 @@ def test_backfill_has_900_second_timeout(template):
     assert backfill["Properties"]["Timeout"] == 900
 
 
+def test_morning_has_120_second_timeout(template):
+    """生成と採点で2回LLMを呼ぶため、朝だけ実行時間を延ばしている。"""
+    functions = template.find_resources("AWS::Lambda::Function")
+    morning = next(
+        resource for resource in functions.values()
+        if resource["Properties"]["Handler"] == "src.handlers.morning_handler.handler"
+    )
+    assert morning["Properties"]["Timeout"] == 120
+
+
 def test_backfill_is_not_a_schedule_or_function_url_target(template):
     functions = template.find_resources("AWS::Lambda::Function")
     backfill = next(

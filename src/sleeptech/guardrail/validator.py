@@ -380,3 +380,45 @@ def validate(text: str, facts: Facts) -> ValidationResult:
     if found_times - allowed_times or found_pcts - allowed_pcts:
         return ValidationResult(False, "numbers")
     return ValidationResult(True)
+
+
+RECOVERY_HEADING = "今日のリカバリー"
+_RECOVERY_ITEM_RE = re.compile(r"^・(?P<label>[^:：]+)[:：]\s*(?P<body>.+)$")
+_PLAIN_TIME_RE = re.compile(r"(?<!\d)(\d{1,2}):(\d{2})(?!\d)")
+
+
+def validate_recovery_structure(
+    section: str,
+    expected: tuple[tuple[str, tuple[float, ...]], ...],
+) -> ValidationResult:
+    """リカバリー節が対象領域と1:1で、提示済みの時刻だけを使っているか検査する。
+
+    expected は (領域ラベル, その領域で使ってよい時刻) を表示順に並べたもの。
+    「何を何時に」を担保するため、各行に時刻が1つ以上あることも要求する。
+    """
+    if not expected:
+        return ValidationResult(False, "recovery_unexpected")
+    lines = [line.strip() for line in normalize(section).splitlines() if line.strip()]
+    if not lines or lines[0] != RECOVERY_HEADING:
+        return ValidationResult(False, "recovery_heading")
+    if lines.count(RECOVERY_HEADING) != 1:
+        return ValidationResult(False, "recovery_heading")
+
+    items = lines[1:]
+    if len(items) != len(expected):
+        return ValidationResult(False, "recovery_count")
+
+    for item, (label, allowed) in zip(items, expected):
+        match = _RECOVERY_ITEM_RE.match(item)
+        if match is None:
+            return ValidationResult(False, "recovery_format")
+        if match.group("label").strip() != label:
+            return ValidationResult(False, "recovery_label")
+        body = match.group("body")
+        found = [f"{int(h)}:{int(m):02d}" for h, m in _PLAIN_TIME_RE.findall(body)]
+        if not found:
+            return ValidationResult(False, "recovery_time_missing")
+        permitted = {_time_key(value) for value in allowed}
+        if any(key not in permitted for key in found):
+            return ValidationResult(False, "recovery_time_domain")
+    return ValidationResult(True)

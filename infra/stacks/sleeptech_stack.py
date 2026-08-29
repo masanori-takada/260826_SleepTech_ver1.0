@@ -92,8 +92,12 @@ class SleepTechStack(Stack):
         night_fn = self._function(
             "NightFn", "src.handlers.night_handler.handler", environment
         )
+        # 朝は「リカバリー生成 → LLM-as-Judge 採点」を最大3ラウンド回すため、
+        # 既定の60秒では ExecutionDeadline が常に打ち切り側へ倒れる。
+        # Lambda は実行時間課金なので、上限を上げても使わなければ費用は増えない。
         morning_fn = self._function(
-            "MorningFn", "src.handlers.morning_handler.handler", environment
+            "MorningFn", "src.handlers.morning_handler.handler", environment,
+            timeout=Duration.seconds(120),
         )
         webhook_fn = self._function(
             "WebhookFn", "src.handlers.webhook_handler.handler", environment

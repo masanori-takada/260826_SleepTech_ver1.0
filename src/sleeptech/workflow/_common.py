@@ -39,6 +39,7 @@ def save_message(
     regen_count: int,
     delivered: bool,
     log,
+    judge=None,
 ) -> None:
     """仕様 第9節 MSG#NIGHT / MSG#MORNING（I5対応）。
 
@@ -57,6 +58,7 @@ def save_message(
                 guardrail_passed=guardrail_passed,
                 regen_count=regen_count,
                 delivered=delivered,
+                **(judge or {}),
             )
         )
     except Exception as exc:  # noqa: BLE001 — 送信成功後の失敗は伝播させない

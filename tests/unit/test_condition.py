@@ -1,12 +1,17 @@
 """コンディション領域の決定論的評価。"""
 
+from sleeptech.guardrail.validator import validate_recovery_structure
 from sleeptech.memory.schemas import DailyVital, HourlyDrop, RecoveryPlan
+from sleeptech.model import recovery as rc
 from sleeptech.model.condition import (
     assess_conditions,
     build_recovery_material,
+    recovery_domain_times,
+    recovery_targets,
     recovery_time_materials,
     render_condition_section,
     render_morning_report,
+    render_recovery_section,
 )
 
 
@@ -172,7 +177,7 @@ def test_morning_report_is_concise_and_only_shows_calculated_domains():
         light_avoid_after_h=46.5,
     )
 
-    text = render_morning_report(report, vital, plan)
+    text = render_morning_report(report, vital, _times(report, vital, plan))
 
     assert "昨夜：5時間16分" in text
     assert "深睡眠99分・REM74分・中途覚醒3回/24分" in text
@@ -188,34 +193,46 @@ def test_morning_report_is_concise_and_only_shows_calculated_domains():
     assert not any(line.startswith("7時台") for line in text.splitlines())
 
 
-# --- リカバリーをLLMに任せるための分割 ---
+# --- リカバリーは［注意］［要休養］の領域だけに1:1で出す ---
 
 
-def _report_and_plan():
+def _times(report, vital, plan):
+    dip = next(
+        (a.dip_index for a in report.displayed_assessments if a.domain == "focus"),
+        8,
+    )
+    return rc.times(vital.wake_h, vital.wake_h + 16.5, vital.wake_h + dip, plan)
+
+
+def _plan():
+    return RecoveryPlan(
+        caffeine_times_h=[32.0, 37.5],
+        caffeine_cutoff_h=39.5,
+        light_morning_h=31.5,
+        light_avoid_after_h=44.5,
+    )
+
+
+def _case(total_sleep_min: int, efficiency: float, awake_min: int):
     vital = DailyVital(
         date="2026-08-26",
-        total_sleep_min=316,
+        total_sleep_min=total_sleep_min,
         deep_sleep_min=99,
         rem_sleep_min=74,
         awakenings=3,
-        awake_duration_min=24,
+        awake_duration_min=awake_min,
         wake_h=31.0,
-        sleep_efficiency_pct=78.0,
+        sleep_efficiency_pct=efficiency,
     )
     curve, ranges = _curve()
     report = assess_conditions(vital, _history(), curve, ranges, target_sleep_h=7.0)
-    plan = RecoveryPlan(
-        caffeine_times_h=[32.25, 37.75],
-        caffeine_cutoff_h=39.5,
-        light_morning_h=31.75,
-        light_avoid_after_h=46.5,
-    )
-    return report, vital, plan
+    plan = _plan()
+    return report, vital, plan, _times(report, vital, plan)
 
 
 def test_condition_section_holds_no_recovery_and_no_ability_note():
     """確定部は睡眠実績と領域評価だけにする（リカバリーはLLMが作る）。"""
-    report, vital, plan = _report_and_plan()
+    report, vital, _, _ = _case(316, 78.0, 24)
 
     text = render_condition_section(report, vital)
 
@@ -224,32 +241,77 @@ def test_condition_section_holds_no_recovery_and_no_ability_note():
     assert "実測の仕事能力ではありません" not in text
 
 
-def test_recovery_material_gives_levels_and_times_without_percent():
-    """材料は領域の評価レベルと使ってよい時刻を渡し、%は含めない。"""
-    report, vital, plan = _report_and_plan()
+def test_recovery_targets_keep_only_attention_and_rest_levels():
+    """［注意］［要休養］だけを対象にし、［良好］［通常］は落とす。"""
+    report, _, _, _ = _case(316, 78.0, 24)
 
-    material = build_recovery_material(report, plan)
+    targets = recovery_targets(report)
 
-    assert "領域別の評価" in material
-    assert "集中力：" in material
-    assert "8:15" in material  # カフェイン推奨（32.25h）
-    assert "%" not in material
+    assert targets, "この入力では対象領域が1つ以上あるはず"
+    assert {item.level for item in targets} <= {"注意", "要休養"}
+    assert all(item.level not in {"良好", "通常"} for item in targets)
 
 
-def test_recovery_time_materials_lists_every_offered_time():
-    """ガードレールの許可集合は材料で提示した時刻と一致する。"""
-    _, _, plan = _report_and_plan()
+def test_no_recovery_section_when_no_domain_needs_attention():
+    """対象が0件なら節ごと出さない。"""
+    vital = DailyVital(
+        date="2026-08-26", total_sleep_min=430, wake_h=31.0,
+        sleep_efficiency_pct=96.0, awake_duration_min=5,
+    )
+    curve = [HourlyDrop(hour=9 + i, focus_pct=1, mood_pct=1) for i in range(16)]
+    ranges = [(0, 2) for _ in curve]
+    report = assess_conditions(vital, _history(), curve, ranges, target_sleep_h=7.0)
+    times = _times(report, vital, _plan())
 
-    times = recovery_time_materials(plan)
+    assert recovery_targets(report) == ()
+    assert render_recovery_section(recovery_targets(report), times) == ""
+    assert "今日のリカバリー" not in render_morning_report(report, vital, times)
 
-    assert set(times) == {32.25, 37.75, 39.5, 31.75, 46.5}
+
+def test_recovery_material_lists_only_target_domains_with_times():
+    """材料は対象領域だけを、使ってよい時刻付きで並べる。"""
+    report, _, _, times = _case(316, 78.0, 24)
+    targets = recovery_targets(report)
+
+    material = build_recovery_material(targets, times)
+
+    assert "使ってよい時刻" in material
+    for item in targets:
+        assert item.level in material
+    assert "体組成" not in material
+
+
+def test_recovery_time_materials_match_the_offered_menu():
+    """許可集合は対象領域へ提示した時刻の全体と一致する。"""
+    report, _, _, times = _case(316, 78.0, 24)
+    targets = recovery_targets(report)
+
+    offered = {
+        value for _, values in recovery_domain_times(targets, times) for value in values
+    }
+
+    assert set(recovery_time_materials(targets, times)) == offered
+
+
+def test_deterministic_recovery_matches_targets_one_to_one():
+    """決定論フォールバックも対象領域と1:1で、各行に時刻を含む。"""
+    report, _, _, times = _case(316, 78.0, 24)
+    targets = recovery_targets(report)
+
+    section = render_recovery_section(targets, times)
+
+    assert section.splitlines()[0] == "今日のリカバリー"
+    assert len(section.splitlines()) == len(targets) + 1
+    assert validate_recovery_structure(
+        section, recovery_domain_times(targets, times)
+    ).passed
 
 
 def test_morning_report_fallback_keeps_deterministic_recovery():
     """LLMが使えないときのフォールバックは決定論的リカバリーを保つ。"""
-    report, vital, plan = _report_and_plan()
+    report, vital, _, times = _case(316, 78.0, 24)
 
-    text = render_morning_report(report, vital, plan)
+    text = render_morning_report(report, vital, times)
 
     assert "今日のコンディション" in text
     assert "今日のリカバリー" in text

@@ -211,6 +211,11 @@ class Message:
     guardrail_passed: bool = False
     regen_count: int = 0
     delivered: bool = False
+    judge_total: int | None = None
+    judge_scores: dict = field(default_factory=dict)
+    judge_status: str = "skipped"
+    judge_attempts: int = 0
+    judge_reason: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)

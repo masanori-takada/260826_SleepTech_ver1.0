@@ -114,7 +114,14 @@ def test_night_user_does_not_offer_forbidden_success_phrase():
 
 def test_night_and_morning_prompt_lengths_match_required_output():
     assert "夜" in NIGHT_SYSTEM and "400文字以内" in NIGHT_SYSTEM
-    assert "朝" in MORNING_SYSTEM and "600文字以内" in MORNING_SYSTEM
+
+
+def test_morning_prompt_asks_only_for_the_recovery_section():
+    """朝のLLMはリカバリー節だけを、領域と1:1で書く契約になっている。"""
+    assert "今日のリカバリー" in MORNING_SYSTEM
+    assert "同じ数・同じ順番" in MORNING_SYSTEM
+    assert "・領域名：" in MORNING_SYSTEM
+    assert "睡眠実績や領域評価の行は書かない" in MORNING_SYSTEM
 
 
 def test_night_flow_normal_bedtime_passes():

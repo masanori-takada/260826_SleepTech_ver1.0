@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import statistics
 
 from sleeptech.memory.schemas import DailyVital, HourlyDrop
-from sleeptech.memory.schemas import RecoveryPlan
+from sleeptech.model.recovery import RecoveryTimes
 from sleeptech.timefmt import fmt_hm_plain
 
 
@@ -18,6 +18,60 @@ _DOMAIN_LABELS = {
     "mood": "気分",
     "physical_load": "身体負荷",
     "body_composition": "体組成",
+}
+
+
+# リカバリーを出す評価レベル。［良好］［通常］には出さない。
+_TARGET_LEVELS = {"注意", "要休養"}
+
+# 材料に載せる時刻の意味。フィールド名 → 表示ラベル。
+_TIME_MEANINGS = {
+    "wake_h": "起床 ",
+    "focus_block_h": "重要作業に向く ",
+    "dip_h": "集中力の谷 ",
+    "nap_h": "仮眠に向く ",
+    "caffeine_times_h": "カフェインを入れるなら ",
+    "caffeine_cutoff_h": "カフェインを避け始める ",
+    "light_morning_h": "屋外光の期限 ",
+    "exercise_h": "運動に向く ",
+    "dinner_h": "夕食を終える目安 ",
+    "bath_h": "入浴を終える目安 ",
+    "winddown_h": "活動を落とす ",
+    "light_avoid_after_h": "強い光を避け始める ",
+    "bedtime_h": "今夜の就寝目標 ",
+}
+
+# 領域 → (使ってよい時刻のフィールド, 決定論フォールバックの文面)。
+# 材料・構造検査・フォールバックはすべてこの表を参照する。
+_RECOVERY_MENU: dict[str, tuple[tuple[str, ...], str]] = {
+    "focus": (
+        ("focus_block_h", "dip_h", "nap_h"),
+        "{focus_block_h}から重要な作業に取りかかり、{dip_h}前後は手を動かす作業に回す",
+    ),
+    "sleepiness": (
+        ("nap_h", "caffeine_times_h", "caffeine_cutoff_h"),
+        "{nap_h}に15〜20分だけ目を閉じて横になる",
+    ),
+    "sleep_recovery": (
+        ("bath_h", "winddown_h", "bedtime_h", "light_avoid_after_h"),
+        "{bath_h}に湯船から出て、{bedtime_h}までに布団に入る",
+    ),
+    "autonomic": (
+        ("winddown_h", "dinner_h", "exercise_h"),
+        "{winddown_h}から画面を閉じ、息を長く吐く呼吸をゆっくり繰り返す",
+    ),
+    "mood": (
+        ("light_morning_h", "exercise_h", "winddown_h"),
+        "{light_morning_h}までに外の光を10分浴びる",
+    ),
+    "physical_load": (
+        ("exercise_h", "bath_h"),
+        "{exercise_h}の運動は軽い散歩までにして、{bath_h}に湯船で脚をほぐす",
+    ),
+    "body_composition": (
+        ("dinner_h", "exercise_h"),
+        "{dinner_h}までに夕食を終える",
+    ),
 }
 
 
@@ -33,6 +87,7 @@ class DomainAssessment:
     valid_days: int = 0
     freshness: str = "current"
     recommended_actions: tuple[str, ...] = ()
+    dip_index: int | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +146,7 @@ def _focus_assessment(
         evidence=("Two-Process Modelの睡眠圧・概日リズム",),
         confidence="medium",
         recommended_actions=("重要作業は谷の時間帯を避ける",),
+        dip_index=worst,
     )
 
 
@@ -330,79 +386,123 @@ def render_condition_section(
     return "\n".join(lines)
 
 
-def _recovery_action_candidates(
-    report: DailyConditionReport,
-    recovery_plan: RecoveryPlan,
-) -> list[str]:
-    """決定論的に出せるリカバリー行動を優先順に並べる。"""
-    candidates: list[str] = []
-    if recovery_plan.caffeine_times_h:
-        times = "・".join(fmt_hm_plain(value) for value in recovery_plan.caffeine_times_h)
-        candidates.append(
-            f"カフェインは{times}、{fmt_hm_plain(recovery_plan.caffeine_cutoff_h)}以降は避ける"
-        )
-    candidates.append(
-        f"{fmt_hm_plain(recovery_plan.light_morning_h)}までに屋外光を10分"
+def recovery_targets(report: DailyConditionReport) -> tuple[DomainAssessment, ...]:
+    """リカバリーを出す対象＝［注意］［要休養］の領域だけを表示順で返す。"""
+    return tuple(
+        assessment
+        for assessment in report.displayed_assessments
+        if assessment.level in _TARGET_LEVELS
     )
-    candidates.extend(report.recovery_actions)
-
-    unique: list[str] = []
-    for action in candidates:
-        if action not in unique:
-            unique.append(action)
-    return unique
 
 
-def recovery_time_materials(recovery_plan: RecoveryPlan) -> tuple[float, ...]:
-    """リカバリー文で使ってよい時刻（ガードレールの許可集合）を返す。"""
-    times = list(recovery_plan.caffeine_times_h)
-    times.extend([
-        recovery_plan.caffeine_cutoff_h,
-        recovery_plan.light_morning_h,
-        recovery_plan.light_avoid_after_h,
-    ])
-    return tuple(dict.fromkeys(float(value) for value in times))
+def _menu_times(times: RecoveryTimes, fields: tuple[str, ...]) -> tuple[float, ...]:
+    """メニューのフィールド名を実際の時刻へ展開する。"""
+    values: list[float] = []
+    for field_name in fields:
+        value = getattr(times, field_name)
+        if isinstance(value, tuple):
+            values.extend(value)
+        else:
+            values.append(value)
+    return tuple(dict.fromkeys(values))
+
+
+def recovery_domain_times(
+    targets: tuple[DomainAssessment, ...],
+    times: RecoveryTimes,
+) -> tuple[tuple[str, tuple[float, ...]], ...]:
+    """対象領域ごとに「使ってよい時刻」を並べる。構造検査と材料の単一の情報源。"""
+    pairs: list[tuple[str, tuple[float, ...]]] = []
+    for assessment in targets:
+        fields, _ = _RECOVERY_MENU.get(assessment.domain, ((), ""))
+        label = _DOMAIN_LABELS.get(assessment.domain, assessment.domain)
+        pairs.append((label, _menu_times(times, fields)))
+    return tuple(pairs)
+
+
+def recovery_time_materials(
+    targets: tuple[DomainAssessment, ...],
+    times: RecoveryTimes,
+) -> tuple[float, ...]:
+    """ガードレールの allowed_times に渡す、提示済み時刻の全体集合。"""
+    values: list[float] = []
+    for _, domain_times in recovery_domain_times(targets, times):
+        values.extend(domain_times)
+    return tuple(dict.fromkeys(values))
 
 
 def build_recovery_material(
-    report: DailyConditionReport,
-    recovery_plan: RecoveryPlan,
+    targets: tuple[DomainAssessment, ...],
+    times: RecoveryTimes,
 ) -> str:
     """LLMがリカバリー策を組み立てるための材料。数値はここで確定させる。"""
-    lines = ["【リカバリー提案の材料】", "領域別の評価:"]
-    for assessment in report.displayed_assessments:
+    if not targets:
+        return ""
+    lines = ["【リカバリー提案の材料】"]
+    domain_times = dict(recovery_domain_times(targets, times))
+    for assessment in targets:
         label = _DOMAIN_LABELS.get(assessment.domain, assessment.domain)
-        lines.append(f"- {label}：{assessment.level}")
-
-    lines.append("使ってよい時刻（これ以外の時刻・数値は書かない）:")
-    if recovery_plan.caffeine_times_h:
-        times = "・".join(fmt_hm_plain(value) for value in recovery_plan.caffeine_times_h)
-        lines.append(f"- カフェインを入れるなら {times}")
-    lines.append(f"- カフェインを避け始める {fmt_hm_plain(recovery_plan.caffeine_cutoff_h)}")
-    lines.append(f"- 屋外光を浴びる期限 {fmt_hm_plain(recovery_plan.light_morning_h)}")
-    lines.append(f"- 強い光を避け始める {fmt_hm_plain(recovery_plan.light_avoid_after_h)}")
-
-    lines.append("参考にしてよい定型案:")
-    lines.extend(f"- {action}" for action in _recovery_action_candidates(report, recovery_plan))
+        lines.append(f"■ {label}［{assessment.level}］{assessment.headline}")
+        offered = "・".join(
+            f"{_TIME_MEANINGS[field]}{fmt_hm_plain(value)}"
+            for field, value in _labelled_times(assessment.domain, times)
+        )
+        lines.append(f"  使ってよい時刻: {offered}")
+    lines.append(
+        "上の時刻以外の時刻・数値を書かないこと。各領域に1行ずつ、"
+        "課題を解決する具体的な行動を書くこと。"
+    )
     return "\n".join(lines)
 
 
+def _labelled_times(domain: str, times: RecoveryTimes) -> list[tuple[str, float]]:
+    """材料に載せる (意味, 時刻) の並び。"""
+    fields, _ = _RECOVERY_MENU.get(domain, ((), ""))
+    labelled: list[tuple[str, float]] = []
+    for field_name in fields:
+        value = getattr(times, field_name)
+        if isinstance(value, tuple):
+            labelled.extend((field_name, item) for item in value)
+        else:
+            labelled.append((field_name, value))
+    return labelled
+
+
 def render_recovery_section(
-    report: DailyConditionReport,
-    recovery_plan: RecoveryPlan,
+    targets: tuple[DomainAssessment, ...],
+    times: RecoveryTimes,
 ) -> str:
-    """LLMが使えないときに送る決定論的なリカバリー節。"""
-    actions = _recovery_action_candidates(report, recovery_plan)[:3]
-    return "\n".join(["今日のリカバリー", *(f"・{action}" for action in actions)])
+    """LLMが使えないときの決定論的なリカバリー節。対象0件なら空文字。"""
+    if not targets:
+        return ""
+    lines = ["今日のリカバリー"]
+    for assessment in targets:
+        label = _DOMAIN_LABELS.get(assessment.domain, assessment.domain)
+        _, template = _RECOVERY_MENU.get(assessment.domain, ((), ""))
+        lines.append(f"・{label}：{_fill(template, times)}")
+    return "\n".join(lines)
+
+
+def _fill(template: str, times: RecoveryTimes) -> str:
+    """テンプレートの {フィールド名} を時刻表記へ置き換える。"""
+    filled = template
+    for field_name in _TIME_MEANINGS:
+        token = "{" + field_name + "}"
+        if token not in filled:
+            continue
+        value = getattr(times, field_name)
+        if isinstance(value, tuple):
+            value = value[0] if value else times.wake_h
+        filled = filled.replace(token, fmt_hm_plain(value))
+    return filled
 
 
 def render_morning_report(
     report: DailyConditionReport,
     vital: DailyVital,
-    recovery_plan: RecoveryPlan,
+    times: RecoveryTimes,
 ) -> str:
     """確定部と決定論的リカバリーを繋いだ朝本文（LLM不通時のフォールバック）。"""
-    return "\n\n".join([
-        render_condition_section(report, vital),
-        render_recovery_section(report, recovery_plan),
-    ])
+    condition = render_condition_section(report, vital)
+    recovery = render_recovery_section(recovery_targets(report), times)
+    return "\n\n".join([condition, recovery]) if recovery else condition
