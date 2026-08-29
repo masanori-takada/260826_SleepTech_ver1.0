@@ -321,22 +321,39 @@ def test_morning_report_fallback_keeps_deterministic_recovery():
     assert "実測の仕事能力ではありません" not in text
 
 
-def test_recovery_line_may_not_quote_the_domain_headline():
-    """領域評価の文言を引き写した行は行動になっていないので拒否する。"""
+def test_recovery_line_may_not_restate_measurements():
+    """測定値の名前を持ち出した行は行動になっていないので拒否する。"""
     report, _, _, times = _case(316, 78.0, 24)
     targets = recovery_targets(report)
     expected = recovery_domain_times(targets, times)
-    label, allowed, headline = expected[0]
+    label, allowed, _ = expected[0]
     quoted = "\n".join([
         "今日のリカバリー",
-        f"・{label}：{headline}を踏まえ、{_hm(allowed[0])}に休む",
+        f"・{label}：中途覚醒が多いので{_hm(allowed[0])}に休む",
         *(
             f"・{other}：{_hm(values[0])}に休む"
             for other, values, _ in expected[1:]
         ),
     ])
 
-    assert validate_recovery_structure(quoted, expected).reason == "recovery_quotes_headline"
+    assert validate_recovery_structure(quoted, expected).reason == "recovery_metric"
+
+
+def test_recovery_reason_codes_survive_log_masking():
+    """理由コードは24文字未満にする。
+
+    observability の _TOKENish が24文字以上の英数字・アンダースコア列を
+    トークンとみなしてマスクするため、長い理由コードはログで読めなくなる。
+    """
+    from sleeptech.guardrail import validator as gv
+    from sleeptech.observability import mask_value
+
+    report, _, _, times = _case(316, 78.0, 24)
+    expected = recovery_domain_times(recovery_targets(report), times)
+    broken = "今日のリカバリー\n・存在しない領域：9:00に休む"
+
+    reason = gv.validate_recovery_structure(broken, expected).reason
+    assert reason and mask_value("reason", reason) == reason
 
 
 def test_recovery_line_may_not_pile_up_times():

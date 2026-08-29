@@ -385,24 +385,25 @@ def validate(text: str, facts: Facts) -> ValidationResult:
 RECOVERY_HEADING = "今日のリカバリー"
 # 1行に入れてよい時刻の上限。3つ以上並ぶと「何時に何をするか」が読み取れなくなる。
 MAX_RECOVERY_TIMES_PER_LINE = 2
-# 領域評価の文言をこの長さ以上そのまま写していたら引き写しとみなす。
-MIN_QUOTE_CHARS = 8
+# 測定値の名前。行動文に出てくる必然性がなく、出てきたときは
+# 領域評価の引き写し（確定部の重複）になっている。
+METRIC_WORDS = (
+    "実睡眠", "中途覚醒", "睡眠効率", "REM", "HRV", "前日平均心拍",
+    "個人基準", "低下見込み", "平常時比", "皮膚温", "体脂肪", "睡眠圧",
+)
 _RECOVERY_ITEM_RE = re.compile(r"^・(?P<label>[^:：]+)[:：]\s*(?P<body>.+)$")
 _PLAIN_TIME_RE = re.compile(r"(?<!\d)(\d{1,2}):(\d{2})(?!\d)")
 
 
-def _quotes_headline(body: str, headline: str) -> bool:
-    """領域評価の文言をそのまま写しているか。
+def _restates_metrics(body: str) -> bool:
+    """測定値の名前を持ち出しているか。
 
     「実睡眠5時間08分・中途覚醒40分…を踏まえ」のような引き写しは行動を示して
     おらず、確定部の重複でしかない。しかも数値を落として写すと不正確になる。
+    以前は領域評価との連続一致で見ていたが、HRVのように評価文が短い領域では
+    正当な行動文まで巻き込んだため、測定値の名前そのものを禁じる形にした。
     """
-    if not headline or len(headline) < MIN_QUOTE_CHARS:
-        return False
-    return any(
-        headline[i : i + MIN_QUOTE_CHARS] in body
-        for i in range(len(headline) - MIN_QUOTE_CHARS + 1)
-    )
+    return any(word in body for word in METRIC_WORDS)
 
 
 def validate_recovery_structure(
@@ -427,7 +428,7 @@ def validate_recovery_structure(
     if len(items) != len(expected):
         return ValidationResult(False, "recovery_count")
 
-    for item, (label, allowed, headline) in zip(items, expected):
+    for item, (label, allowed, _headline) in zip(items, expected):
         match = _RECOVERY_ITEM_RE.match(item)
         if match is None:
             return ValidationResult(False, "recovery_format")
@@ -442,6 +443,6 @@ def validate_recovery_structure(
         permitted = {_time_key(value) for value in allowed}
         if any(key not in permitted for key in found):
             return ValidationResult(False, "recovery_time_domain")
-        if _quotes_headline(body, headline):
-            return ValidationResult(False, "recovery_quotes_headline")
+        if _restates_metrics(body):
+            return ValidationResult(False, "recovery_metric")
     return ValidationResult(True)
