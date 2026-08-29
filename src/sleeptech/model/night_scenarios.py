@@ -29,8 +29,8 @@ def build_scenarios(
     offset_pct: float,
     margin_pct: int,
 ) -> tuple[BedtimeScenario, ...]:
-    """推奨、30分遅れ、60分遅れの比較を作る。手遅れ時は現在だけを返す。"""
-    delays = (0,) if advice.status == "too_late" else (0, 30, 60)
+    """推奨、1時間遅れ、2時間遅れの比較を作る。手遅れ時は現在だけを返す。"""
+    delays = (0,) if advice.status == "too_late" else (0, 60, 120)
     scenarios: list[BedtimeScenario] = []
     for delay_min in delays:
         bedtime_h = advice.bedtime_h + delay_min / 60.0
@@ -55,6 +55,16 @@ def build_scenarios(
     return tuple(scenarios)
 
 
+def _delay_label(delay_min: int) -> str:
+    """遅れ幅を「1時間遅れ」「30分遅れ」のように日本語表記へ変換する。"""
+    hours, minutes = divmod(delay_min, 60)
+    if hours and minutes:
+        return f"{hours}時間{minutes}分遅れ"
+    if hours:
+        return f"{hours}時間遅れ"
+    return f"{minutes}分遅れ"
+
+
 def render_night_scenarios(
     scenarios: tuple[BedtimeScenario, ...],
     baseline: Baseline,
@@ -72,7 +82,7 @@ def render_night_scenarios(
         elif scenario.delay_min == 0:
             label = "推奨"
         else:
-            label = f"{scenario.delay_min}分遅れ"
+            label = _delay_label(scenario.delay_min)
         lines.append(
             f"・{label} {fmt_hm(scenario.bedtime_h)} → "
             f"明日の主要時間帯 {scenario.range_low_pct}〜{scenario.range_high_pct}%低下見込み"

@@ -125,7 +125,7 @@ def test_saves_prediction_and_marks_notified():
 
 
 def test_night_line_compares_three_bedtimes_and_saves_scenarios():
-    """通常時は推奨・30分遅れ・60分遅れを比較して保存する。"""
+    """通常時は推奨・1時間遅れ・2時間遅れを比較して保存する。"""
     memory = _memory()
     push = FakePushClient()
 
@@ -134,11 +134,11 @@ def test_night_line_compares_three_bedtimes_and_saves_scenarios():
     text = push.sent[0]["text"]
     assert "今夜の選択肢" in text
     assert "推奨" in text
-    assert "30分遅れ" in text
-    assert "60分遅れ" in text
+    assert "1時間遅れ" in text
+    assert "2時間遅れ" in text
     assert "現行の%計算には使っていません" not in text
     pred = memory.get_prediction(DATE, "NIGHT")
-    assert [item["delay_min"] for item in pred.scenarios] == [0, 30, 60]
+    assert [item["delay_min"] for item in pred.scenarios] == [0, 60, 120]
 
 
 def test_too_late_night_line_does_not_show_future_delay_scenarios():
@@ -149,8 +149,8 @@ def test_too_late_night_line_does_not_show_future_delay_scenarios():
 
     text = push.sent[0]["text"]
     assert "今すぐ就寝" in text
-    assert "30分遅れ" not in text
-    assert "60分遅れ" not in text
+    assert "1時間遅れ" not in text
+    assert "2時間遅れ" not in text
 
 
 def test_night_saves_raw_calibrated_range_and_confidence():
