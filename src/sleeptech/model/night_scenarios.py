@@ -87,8 +87,4 @@ def render_night_scenarios(
             f"・{label} {fmt_hm(scenario.bedtime_h)} → "
             f"明日の主要時間帯 {scenario.range_low_pct}〜{scenario.range_high_pct}%低下見込み"
         )
-    lines.extend([
-        "",
-        "※%は睡眠モデルと主観評価による推定幅です。実測の仕事能力ではありません。",
-    ])
     return "\n".join(lines)

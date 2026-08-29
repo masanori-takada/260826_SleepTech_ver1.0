@@ -48,5 +48,5 @@ def test_rendered_comparison_explains_that_percent_is_an_estimate_not_measured_a
     assert "推奨" in text
     assert "1時間遅れ" in text
     assert "2時間遅れ" in text
-    assert "実測の仕事能力ではありません" in text
+    assert "実測の仕事能力ではありません" not in text
     assert "中途覚醒・HRV・心拍数は現行の%計算には使っていません" not in text

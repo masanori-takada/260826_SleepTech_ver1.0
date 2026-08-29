@@ -414,3 +414,110 @@ def test_afternoon_shows_a_local_dip_after_short_sleep():
     pred = memory.get_prediction(DATE, "MORNING")
     by_hour = {d["hour"]: d["focus_pct"] for d in pred.curve}
     assert by_hour[14] > by_hour[10]
+
+
+# --- リカバリーをLLMが組み立てる経路 ---
+
+
+class RecoveryWritingLlm:
+    """確定部をそのまま残し、リカバリーを自分で書く偽LLM。"""
+
+    def __init__(self, recovery_lines: tuple[str, ...]) -> None:
+        self.recovery_lines = recovery_lines
+        self.calls = []
+
+    def complete(self, system: str, user: str) -> str:
+        self.calls.append((system, user))
+        condition = user.split("【リカバリー提案の材料】")[0].rstrip()
+        return "\n".join([condition, "", "今日のリカバリー", *self.recovery_lines])
+
+
+def test_llm_writes_its_own_recovery_actions():
+    """領域評価を踏まえた自由なリカバリー策が本文として通る。"""
+    push = FakePushClient()
+    llm = RecoveryWritingLlm((
+        "・肩甲骨を大きく5回まわして血流を戻す",
+        "・昼はラジオ体操で体を起こす",
+        "・深呼吸をゆっくり繰り返す",
+    ))
+
+    got = morning.run_morning(DATE, _deps(llm=llm, push=push))
+
+    assert got["used_fallback"] is False
+    text = push.sent[0]["text"]
+    assert "肩甲骨" in text
+    assert "ラジオ体操" in text
+
+
+def test_llm_receives_domain_levels_as_recovery_material():
+    """LLMには領域別の評価レベルが材料として渡る。"""
+    llm = RecoveryWritingLlm(("・首をゆっくり倒して力を抜く",))
+
+    morning.run_morning(DATE, _deps(llm=llm))
+
+    _, user = llm.calls[0]
+    assert "【リカバリー提案の材料】" in user
+    assert "集中力：" in user
+    assert "使ってよい時刻" in user
+
+
+def test_recovery_with_unoffered_time_is_rejected():
+    """材料にない時刻を書いたリカバリーは捏造として弾く。"""
+    push = FakePushClient()
+    llm = RecoveryWritingLlm(("・3:07に起きて散歩する",))
+
+    got = morning.run_morning(DATE, _deps(llm=llm, push=push))
+
+    assert got["used_fallback"] is True
+    assert "3:07" not in push.sent[0]["text"]
+
+
+def test_fallback_body_still_carries_recovery_actions():
+    """LLMが落ちてもリカバリー節は決定論的に届く。"""
+    push = FakePushClient()
+
+    morning.run_morning(DATE, _deps(llm=StubLlm(), push=push))
+
+    text = push.sent[0]["text"]
+    assert "今日のコンディション" in text
+    assert "今日のリカバリー" in text
+
+
+def test_morning_message_has_no_ability_note():
+    """朝本文に免責注記を出さない。"""
+    push = FakePushClient()
+
+    morning.run_morning(DATE, _deps(llm=NullClient(), push=push))
+
+    assert "実測の仕事能力ではありません" not in push.sent[0]["text"]
+
+
+class MaterialTimeLlm:
+    """材料に載っている時刻を1つ拾ってリカバリーに使う偽LLM。"""
+
+    def __init__(self) -> None:
+        self.used_time = None
+
+    def complete(self, system: str, user: str) -> str:
+        import re
+
+        condition, material = user.split("【リカバリー提案の材料】")
+        self.used_time = re.search(r"\d{1,2}:\d{2}", material).group(0)
+        return "\n".join([
+            condition.rstrip(),
+            "",
+            "今日のリカバリー",
+            f"・{self.used_time}までに外の光を浴びる",
+            "・ふくらはぎを伸ばして足元を温める",
+        ])
+
+
+def test_recovery_may_use_times_offered_in_the_material():
+    """材料として渡した時刻はリカバリー文で使える。"""
+    push = FakePushClient()
+    llm = MaterialTimeLlm()
+
+    got = morning.run_morning(DATE, _deps(llm=llm, push=push))
+
+    assert got["used_fallback"] is False
+    assert llm.used_time in push.sent[0]["text"]

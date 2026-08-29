@@ -301,12 +301,11 @@ def assess_conditions(
     )
 
 
-def render_morning_report(
+def render_condition_section(
     report: DailyConditionReport,
     vital: DailyVital,
-    recovery_plan: RecoveryPlan,
 ) -> str:
-    """算出済みの領域だけを、朝LINE向けの短い本文に整形する。"""
+    """睡眠実績と領域評価だけを整形する（LLMが改変してはならない確定部）。"""
     total_min = int(vital.total_sleep_min or 0)
     hours, minutes = divmod(total_min, 60)
     lines = [f"昨夜：{hours}時間{minutes:02d}分"]
@@ -328,23 +327,82 @@ def render_morning_report(
     for assessment in report.displayed_assessments:
         label = _DOMAIN_LABELS.get(assessment.domain, assessment.domain)
         lines.append(f"・{label}［{assessment.level}］{assessment.headline}")
+    return "\n".join(lines)
 
-    action_candidates: list[str] = []
+
+def _recovery_action_candidates(
+    report: DailyConditionReport,
+    recovery_plan: RecoveryPlan,
+) -> list[str]:
+    """決定論的に出せるリカバリー行動を優先順に並べる。"""
+    candidates: list[str] = []
     if recovery_plan.caffeine_times_h:
         times = "・".join(fmt_hm_plain(value) for value in recovery_plan.caffeine_times_h)
-        action_candidates.append(
+        candidates.append(
             f"カフェインは{times}、{fmt_hm_plain(recovery_plan.caffeine_cutoff_h)}以降は避ける"
         )
-    action_candidates.append(
+    candidates.append(
         f"{fmt_hm_plain(recovery_plan.light_morning_h)}までに屋外光を10分"
     )
-    action_candidates.extend(report.recovery_actions)
+    candidates.extend(report.recovery_actions)
 
-    unique_actions: list[str] = []
-    for action in action_candidates:
-        if action not in unique_actions:
-            unique_actions.append(action)
-    lines.extend(["", "今日のリカバリー"])
-    lines.extend(f"・{action}" for action in unique_actions[:3])
-    lines.extend(["", "※%は睡眠モデルと主観評価による推定幅です。実測の仕事能力ではありません。"])
+    unique: list[str] = []
+    for action in candidates:
+        if action not in unique:
+            unique.append(action)
+    return unique
+
+
+def recovery_time_materials(recovery_plan: RecoveryPlan) -> tuple[float, ...]:
+    """リカバリー文で使ってよい時刻（ガードレールの許可集合）を返す。"""
+    times = list(recovery_plan.caffeine_times_h)
+    times.extend([
+        recovery_plan.caffeine_cutoff_h,
+        recovery_plan.light_morning_h,
+        recovery_plan.light_avoid_after_h,
+    ])
+    return tuple(dict.fromkeys(float(value) for value in times))
+
+
+def build_recovery_material(
+    report: DailyConditionReport,
+    recovery_plan: RecoveryPlan,
+) -> str:
+    """LLMがリカバリー策を組み立てるための材料。数値はここで確定させる。"""
+    lines = ["【リカバリー提案の材料】", "領域別の評価:"]
+    for assessment in report.displayed_assessments:
+        label = _DOMAIN_LABELS.get(assessment.domain, assessment.domain)
+        lines.append(f"- {label}：{assessment.level}")
+
+    lines.append("使ってよい時刻（これ以外の時刻・数値は書かない）:")
+    if recovery_plan.caffeine_times_h:
+        times = "・".join(fmt_hm_plain(value) for value in recovery_plan.caffeine_times_h)
+        lines.append(f"- カフェインを入れるなら {times}")
+    lines.append(f"- カフェインを避け始める {fmt_hm_plain(recovery_plan.caffeine_cutoff_h)}")
+    lines.append(f"- 屋外光を浴びる期限 {fmt_hm_plain(recovery_plan.light_morning_h)}")
+    lines.append(f"- 強い光を避け始める {fmt_hm_plain(recovery_plan.light_avoid_after_h)}")
+
+    lines.append("参考にしてよい定型案:")
+    lines.extend(f"- {action}" for action in _recovery_action_candidates(report, recovery_plan))
     return "\n".join(lines)
+
+
+def render_recovery_section(
+    report: DailyConditionReport,
+    recovery_plan: RecoveryPlan,
+) -> str:
+    """LLMが使えないときに送る決定論的なリカバリー節。"""
+    actions = _recovery_action_candidates(report, recovery_plan)[:3]
+    return "\n".join(["今日のリカバリー", *(f"・{action}" for action in actions)])
+
+
+def render_morning_report(
+    report: DailyConditionReport,
+    vital: DailyVital,
+    recovery_plan: RecoveryPlan,
+) -> str:
+    """確定部と決定論的リカバリーを繋いだ朝本文（LLM不通時のフォールバック）。"""
+    return "\n\n".join([
+        render_condition_section(report, vital),
+        render_recovery_section(report, recovery_plan),
+    ])

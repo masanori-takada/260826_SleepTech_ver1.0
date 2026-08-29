@@ -1,7 +1,13 @@
 """コンディション領域の決定論的評価。"""
 
 from sleeptech.memory.schemas import DailyVital, HourlyDrop, RecoveryPlan
-from sleeptech.model.condition import assess_conditions, render_morning_report
+from sleeptech.model.condition import (
+    assess_conditions,
+    build_recovery_material,
+    recovery_time_materials,
+    render_condition_section,
+    render_morning_report,
+)
 
 
 def _history(count: int = 14) -> list[DailyVital]:
@@ -180,3 +186,71 @@ def test_morning_report_is_concise_and_only_shows_calculated_domains():
     assert "データ不足" not in text
     assert "現行の%計算には使っていません" not in text
     assert not any(line.startswith("7時台") for line in text.splitlines())
+
+
+# --- リカバリーをLLMに任せるための分割 ---
+
+
+def _report_and_plan():
+    vital = DailyVital(
+        date="2026-08-26",
+        total_sleep_min=316,
+        deep_sleep_min=99,
+        rem_sleep_min=74,
+        awakenings=3,
+        awake_duration_min=24,
+        wake_h=31.0,
+        sleep_efficiency_pct=78.0,
+    )
+    curve, ranges = _curve()
+    report = assess_conditions(vital, _history(), curve, ranges, target_sleep_h=7.0)
+    plan = RecoveryPlan(
+        caffeine_times_h=[32.25, 37.75],
+        caffeine_cutoff_h=39.5,
+        light_morning_h=31.75,
+        light_avoid_after_h=46.5,
+    )
+    return report, vital, plan
+
+
+def test_condition_section_holds_no_recovery_and_no_ability_note():
+    """確定部は睡眠実績と領域評価だけにする（リカバリーはLLMが作る）。"""
+    report, vital, plan = _report_and_plan()
+
+    text = render_condition_section(report, vital)
+
+    assert "今日のコンディション" in text
+    assert "今日のリカバリー" not in text
+    assert "実測の仕事能力ではありません" not in text
+
+
+def test_recovery_material_gives_levels_and_times_without_percent():
+    """材料は領域の評価レベルと使ってよい時刻を渡し、%は含めない。"""
+    report, vital, plan = _report_and_plan()
+
+    material = build_recovery_material(report, plan)
+
+    assert "領域別の評価" in material
+    assert "集中力：" in material
+    assert "8:15" in material  # カフェイン推奨（32.25h）
+    assert "%" not in material
+
+
+def test_recovery_time_materials_lists_every_offered_time():
+    """ガードレールの許可集合は材料で提示した時刻と一致する。"""
+    _, _, plan = _report_and_plan()
+
+    times = recovery_time_materials(plan)
+
+    assert set(times) == {32.25, 37.75, 39.5, 31.75, 46.5}
+
+
+def test_morning_report_fallback_keeps_deterministic_recovery():
+    """LLMが使えないときのフォールバックは決定論的リカバリーを保つ。"""
+    report, vital, plan = _report_and_plan()
+
+    text = render_morning_report(report, vital, plan)
+
+    assert "今日のコンディション" in text
+    assert "今日のリカバリー" in text
+    assert "実測の仕事能力ではありません" not in text

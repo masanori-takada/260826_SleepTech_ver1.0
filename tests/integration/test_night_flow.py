@@ -459,3 +459,12 @@ def test_save_message_failure_does_not_break_delivery():
     result = night.run_night(DATE, NOW_H, _deps(memory=memory, push=push))
     assert len(push.sent) == 1
     assert result["delivered"] is True
+
+
+def test_night_message_has_no_ability_note():
+    """夜本文に免責注記を出さない。"""
+    push = FakePushClient()
+
+    night.run_night(DATE, NOW_H, _deps(llm=NullClient(), push=push))
+
+    assert "実測の仕事能力ではありません" not in push.sent[0]["text"]

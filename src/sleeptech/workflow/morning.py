@@ -136,13 +136,21 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
     condition_report = cn.assess_conditions(
         vital, history, curve, ranges, baseline.effective_target_sleep_h
     )
-    canonical_body = cn.render_morning_report(condition_report, vital, plan)
+    # 確定部（睡眠実績・領域評価）だけをガードレールの必須行にし、
+    # リカバリーはLLMが領域評価を踏まえて組み立てる。数値の捏造は
+    # allowed_times で禁じ、材料として渡した時刻だけを許可する。
+    condition_body = cn.render_condition_section(condition_report, vital)
+    fallback_body = cn.render_morning_report(condition_report, vital, plan)
+    recovery_material = cn.build_recovery_material(condition_report, plan)
     required_lines = tuple(
-        line.rstrip("。．") for line in canonical_body.splitlines() if line.strip()
+        line.rstrip("。．") for line in condition_body.splitlines() if line.strip()
     )
-    facts = gv.Facts(required_phrases=required_lines)
+    facts = gv.Facts(
+        required_phrases=required_lines,
+        allowed_times=list(cn.recovery_time_materials(plan)),
+    )
     body, used_fallback, regen_count = _compose(
-        deps, canonical_body, facts, log,
+        deps, condition_body, recovery_material, fallback_body, facts, log,
     )
 
     # push の例外はここで捕捉せず伝播させる。送信していないのに mark_notified して
@@ -231,7 +239,9 @@ def _mark_notified(deps: MorningDeps, date: str, log: StructuredLogger) -> None:
         log.log("mark_notified_failed", error=str(exc))
 
 
-def _compose(deps, canonical_body, facts, log) -> tuple[str, bool, int]:
+def _compose(
+    deps, condition_body, recovery_material, fallback_body, facts, log
+) -> tuple[str, bool, int]:
     """LLM で文章化し検証する。通らなければテンプレート文を返す。
 
     戻り値の3つめは regen_count（ガードレール不通過による再試行回数。
@@ -242,7 +252,7 @@ def _compose(deps, canonical_body, facts, log) -> tuple[str, bool, int]:
     でも regen_count=2（max_regen）という不正確な値が記録されていた。
     実際に試行した回数（attempts_made）から数える。
     """
-    user = prompts.morning_condition_user(canonical_body)
+    user = prompts.morning_condition_user(condition_body, recovery_material)
     attempts_made = 0
     for attempt in range(deps.max_regen + 1):
         if deps.deadline is not None and not deps.deadline.can_start():
@@ -257,4 +267,4 @@ def _compose(deps, canonical_body, facts, log) -> tuple[str, bool, int]:
         if result.passed:
             return text, False, attempt
         log.log("guardrail_rejected", attempt=attempt, reason=result.reason)
-    return canonical_body, True, max(attempts_made - 1, 0)
+    return fallback_body, True, max(attempts_made - 1, 0)
