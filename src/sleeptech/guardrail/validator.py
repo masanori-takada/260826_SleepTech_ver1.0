@@ -383,18 +383,37 @@ def validate(text: str, facts: Facts) -> ValidationResult:
 
 
 RECOVERY_HEADING = "今日のリカバリー"
+# 1行に入れてよい時刻の上限。3つ以上並ぶと「何時に何をするか」が読み取れなくなる。
+MAX_RECOVERY_TIMES_PER_LINE = 2
+# 領域評価の文言をこの長さ以上そのまま写していたら引き写しとみなす。
+MIN_QUOTE_CHARS = 8
 _RECOVERY_ITEM_RE = re.compile(r"^・(?P<label>[^:：]+)[:：]\s*(?P<body>.+)$")
 _PLAIN_TIME_RE = re.compile(r"(?<!\d)(\d{1,2}):(\d{2})(?!\d)")
 
 
+def _quotes_headline(body: str, headline: str) -> bool:
+    """領域評価の文言をそのまま写しているか。
+
+    「実睡眠5時間08分・中途覚醒40分…を踏まえ」のような引き写しは行動を示して
+    おらず、確定部の重複でしかない。しかも数値を落として写すと不正確になる。
+    """
+    if not headline or len(headline) < MIN_QUOTE_CHARS:
+        return False
+    return any(
+        headline[i : i + MIN_QUOTE_CHARS] in body
+        for i in range(len(headline) - MIN_QUOTE_CHARS + 1)
+    )
+
+
 def validate_recovery_structure(
     section: str,
-    expected: tuple[tuple[str, tuple[float, ...]], ...],
+    expected: tuple[tuple[str, tuple[float, ...], str], ...],
 ) -> ValidationResult:
     """リカバリー節が対象領域と1:1で、提示済みの時刻だけを使っているか検査する。
 
-    expected は (領域ラベル, その領域で使ってよい時刻) を表示順に並べたもの。
-    「何を何時に」を担保するため、各行に時刻が1つ以上あることも要求する。
+    expected は (領域ラベル, 使ってよい時刻, 領域評価の文言) を表示順に並べたもの。
+    「何を何時に」を担保するため各行に時刻を1つ以上要求し、読み取れなくなるのを
+    防ぐため上限も設ける。領域評価の引き写しは行動ではないので拒否する。
     """
     if not expected:
         return ValidationResult(False, "recovery_unexpected")
@@ -408,7 +427,7 @@ def validate_recovery_structure(
     if len(items) != len(expected):
         return ValidationResult(False, "recovery_count")
 
-    for item, (label, allowed) in zip(items, expected):
+    for item, (label, allowed, headline) in zip(items, expected):
         match = _RECOVERY_ITEM_RE.match(item)
         if match is None:
             return ValidationResult(False, "recovery_format")
@@ -418,7 +437,11 @@ def validate_recovery_structure(
         found = [f"{int(h)}:{int(m):02d}" for h, m in _PLAIN_TIME_RE.findall(body)]
         if not found:
             return ValidationResult(False, "recovery_time_missing")
+        if len(found) > MAX_RECOVERY_TIMES_PER_LINE:
+            return ValidationResult(False, "recovery_time_crowded")
         permitted = {_time_key(value) for value in allowed}
         if any(key not in permitted for key in found):
             return ValidationResult(False, "recovery_time_domain")
+        if _quotes_headline(body, headline):
+            return ValidationResult(False, "recovery_quotes_headline")
     return ValidationResult(True)

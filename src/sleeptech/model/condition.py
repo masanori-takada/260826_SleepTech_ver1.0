@@ -410,14 +410,17 @@ def _menu_times(times: RecoveryTimes, fields: tuple[str, ...]) -> tuple[float, .
 def recovery_domain_times(
     targets: tuple[DomainAssessment, ...],
     times: RecoveryTimes,
-) -> tuple[tuple[str, tuple[float, ...]], ...]:
-    """対象領域ごとに「使ってよい時刻」を並べる。構造検査と材料の単一の情報源。"""
-    pairs: list[tuple[str, tuple[float, ...]]] = []
+) -> tuple[tuple[str, tuple[float, ...], str], ...]:
+    """対象領域ごとに (ラベル, 使ってよい時刻, 評価の文言) を並べる。
+
+    材料・構造検査・決定論フォールバックが参照する単一の情報源。
+    """
+    rows: list[tuple[str, tuple[float, ...], str]] = []
     for assessment in targets:
         fields, _ = _RECOVERY_MENU.get(assessment.domain, ((), ""))
         label = _DOMAIN_LABELS.get(assessment.domain, assessment.domain)
-        pairs.append((label, _menu_times(times, fields)))
-    return tuple(pairs)
+        rows.append((label, _menu_times(times, fields), assessment.headline))
+    return tuple(rows)
 
 
 def recovery_time_materials(
@@ -426,7 +429,7 @@ def recovery_time_materials(
 ) -> tuple[float, ...]:
     """ガードレールの allowed_times に渡す、提示済み時刻の全体集合。"""
     values: list[float] = []
-    for _, domain_times in recovery_domain_times(targets, times):
+    for _, domain_times, _headline in recovery_domain_times(targets, times):
         values.extend(domain_times)
     return tuple(dict.fromkeys(values))
 
@@ -439,7 +442,6 @@ def build_recovery_material(
     if not targets:
         return ""
     lines = ["【リカバリー提案の材料】"]
-    domain_times = dict(recovery_domain_times(targets, times))
     for assessment in targets:
         label = _DOMAIN_LABELS.get(assessment.domain, assessment.domain)
         lines.append(f"■ {label}［{assessment.level}］{assessment.headline}")

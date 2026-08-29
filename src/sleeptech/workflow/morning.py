@@ -132,7 +132,9 @@ def run_morning(date: str, deps: MorningDeps) -> dict:
     mean_low, mean_high = display_range(calibrated_mean, cal.margin_pct)
 
     # 5. リカバリー（今夜の就寝は「起床 + 平常時の覚醒時間」と見なす）
-    next_bedtime_h = vital.wake_h + (24.0 - baseline.effective_target_sleep_h)
+    # 今夜の就寝目標は「明日の起床目安 − 目標睡眠」。実測の起床から引くと、
+    # 寝坊した日ほど入浴も就寝も深夜へずれて実行不能な提案になる。
+    next_bedtime_h = baseline.wake_h + (24.0 - baseline.effective_target_sleep_h)
     plan = rc.plan(vital.wake_h, next_bedtime_h)
     log.log("recovery", caffeine=len(plan.caffeine_times_h))
 

@@ -3,6 +3,7 @@
 from sleeptech.guardrail.validator import validate_recovery_structure
 from sleeptech.memory.schemas import DailyVital, HourlyDrop, RecoveryPlan
 from sleeptech.model import recovery as rc
+from sleeptech.timefmt import fmt_hm_plain as _hm
 from sleeptech.model.condition import (
     assess_conditions,
     build_recovery_material,
@@ -287,7 +288,9 @@ def test_recovery_time_materials_match_the_offered_menu():
     targets = recovery_targets(report)
 
     offered = {
-        value for _, values in recovery_domain_times(targets, times) for value in values
+        value
+        for _, values, _headline in recovery_domain_times(targets, times)
+        for value in values
     }
 
     assert set(recovery_time_materials(targets, times)) == offered
@@ -316,3 +319,52 @@ def test_morning_report_fallback_keeps_deterministic_recovery():
     assert "今日のコンディション" in text
     assert "今日のリカバリー" in text
     assert "実測の仕事能力ではありません" not in text
+
+
+def test_recovery_line_may_not_quote_the_domain_headline():
+    """領域評価の文言を引き写した行は行動になっていないので拒否する。"""
+    report, _, _, times = _case(316, 78.0, 24)
+    targets = recovery_targets(report)
+    expected = recovery_domain_times(targets, times)
+    label, allowed, headline = expected[0]
+    quoted = "\n".join([
+        "今日のリカバリー",
+        f"・{label}：{headline}を踏まえ、{_hm(allowed[0])}に休む",
+        *(
+            f"・{other}：{_hm(values[0])}に休む"
+            for other, values, _ in expected[1:]
+        ),
+    ])
+
+    assert validate_recovery_structure(quoted, expected).reason == "recovery_quotes_headline"
+
+
+def test_recovery_line_may_not_pile_up_times():
+    """1行に時刻を3つ以上並べると読めなくなるので拒否する。"""
+    report, _, _, times = _case(316, 78.0, 24)
+    targets = recovery_targets(report)
+    expected = recovery_domain_times(targets, times)
+    label, allowed, _ = expected[0]
+    crowded = "\n".join([
+        "今日のリカバリー",
+        f"・{label}：" + "と".join(_hm(value) for value in allowed[:3]) + "に動く",
+        *(
+            f"・{other}：{_hm(values[0])}に休む"
+            for other, values, _ in expected[1:]
+        ),
+    ])
+
+    assert validate_recovery_structure(crowded, expected).reason == "recovery_time_crowded"
+
+
+def test_deterministic_recovery_keeps_at_most_two_times_per_line():
+    """決定論フォールバック自身が新しい上限を守っている。"""
+    import re
+
+    report, _, _, times = _case(316, 78.0, 24)
+    targets = recovery_targets(report)
+
+    section = render_recovery_section(targets, times)
+
+    for line in section.splitlines()[1:]:
+        assert len(re.findall(r"\d{1,2}:\d{2}", line)) <= 2

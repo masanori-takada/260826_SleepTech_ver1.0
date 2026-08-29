@@ -671,3 +671,42 @@ def test_fallback_body_still_carries_recovery_actions():
     text = push.sent[0]["text"]
     assert "今日のコンディション" in text
     assert "今日のリカバリー" in text
+
+
+def test_tonight_bedtime_comes_from_the_personal_wake_baseline():
+    """寝坊した日でも、今夜の就寝目標は個人基準の起床から逆算する。
+
+    実測の起床から引くと、遅く起きた日ほど入浴も就寝も深夜へずれて
+    実行できない提案になる。
+    """
+    memory = _memory()  # 個人基準の起床は 7:00（wake_h=31.0）
+    source = FakeHealthSource({
+        "total_sleep_min": 308, "deep_sleep_min": 36, "rem_sleep_min": 10,
+        "awakenings": 1, "bedtime_h": 27.5, "wake_h": 32.75,  # 実測は 8:45 起床
+    })
+    llm = RecoveryLlm()
+
+    morning.run_morning(DATE, _deps(memory=memory, source=source, llm=llm))
+
+    material = llm.generated[0]
+    assert "今夜の就寝目標 0:" not in material
+    assert "今夜の就寝目標 1:" not in material
+    assert "今夜の就寝目標 23:30" in material
+
+
+def test_headline_quotation_is_rejected_end_to_end():
+    """領域評価を引き写した節は送らない。"""
+    push = FakePushClient()
+
+    def quoting(material: str, _n: int) -> str:
+        import re
+
+        lines = _section_from_material(material).splitlines()
+        headline = re.search(r"^■ [^［]+［[^］]+］(?P<text>.+)$", material, re.M)
+        lines[1] = lines[1].split("：")[0] + "：" + headline.group("text") + "を踏まえて休む"
+        return "\n".join(lines)
+
+    got = morning.run_morning(DATE, _deps(llm=RecoveryLlm(section=quoting), push=push))
+
+    assert got["used_fallback"] is True
+    assert "を踏まえて休む" not in push.sent[0]["text"]
