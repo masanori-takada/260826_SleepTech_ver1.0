@@ -305,7 +305,7 @@ class RecoveryLlm:
     system に評価者プロンプトの目印が含まれていれば採点、そうでなければ生成。
     """
 
-    def __init__(self, section=None, scores=(5, 5, 5, 5), judge_text=None,
+    def __init__(self, section=None, scores=(5, 5, 5), judge_text=None,
                  judge_error=None):
         self.section = section
         self.scores = scores
@@ -318,10 +318,10 @@ class RecoveryLlm:
     def _judge_payload(self) -> str:
         import json
 
-        relevance, actionability, time_fit, tone = self.scores
+        relevance, actionability, time_fit = self.scores
         return json.dumps({
             "relevance": relevance, "actionability": actionability,
-            "time_fit": time_fit, "tone": tone, "reason": "テスト",
+            "time_fit": time_fit, "reason": "テスト",
         }, ensure_ascii=False)
 
     def complete(self, system: str, user: str) -> str:
@@ -556,7 +556,7 @@ def test_no_recovery_section_and_no_llm_call_when_nothing_needs_attention():
 
 def test_judge_passes_on_the_first_candidate():
     """閾値を超えたら即採用し、再生成しない。"""
-    llm = RecoveryLlm(scores=(5, 5, 5, 5))
+    llm = RecoveryLlm(scores=(5, 5, 5))
 
     got = morning.run_morning(DATE, _deps(llm=llm))
 
@@ -567,17 +567,17 @@ def test_judge_passes_on_the_first_candidate():
 
 def test_low_scores_send_the_best_candidate():
     """閾値に届かなくても、最高点の案を送る。"""
-    scores = iter([(3, 3, 3, 3), (4, 3, 3, 3), (2, 2, 2, 2)])
+    scores = iter([(3, 3, 3), (4, 3, 3), (2, 2, 2)])
     llm = RecoveryLlm()
     push = FakePushClient()
 
     def judge_next():
-        relevance, actionability, time_fit, tone = next(scores)
+        relevance, actionability, time_fit = next(scores)
         import json
 
         return json.dumps({
             "relevance": relevance, "actionability": actionability,
-            "time_fit": time_fit, "tone": tone,
+            "time_fit": time_fit,
         })
 
     llm._judge_payload = judge_next
@@ -586,14 +586,14 @@ def test_low_scores_send_the_best_candidate():
 
     assert got["judge_status"] == "best_of"
     assert got["used_fallback"] is False
-    assert got["judge_total"] == 67  # (4,3,3,3) が最高点
+    assert got["judge_total"] == 67  # (4,3,3) が最高点
     assert "今日のリカバリー" in push.sent[0]["text"]
 
 
 def test_vetoed_candidates_fall_back_but_keep_a_recovery_section():
     """0点の軸がある案は採用しない。それでもリカバリー節は消さない。"""
     push = FakePushClient()
-    llm = RecoveryLlm(scores=(0, 5, 5, 5))
+    llm = RecoveryLlm(scores=(0, 5, 5))
 
     got = morning.run_morning(DATE, _deps(llm=llm, push=push))
 
@@ -642,7 +642,7 @@ def test_judge_does_not_see_the_sleep_record():
 def test_judge_scores_are_saved_with_the_message():
     """スコアを保存し、後から推移を追える。"""
     memory = _memory()
-    llm = RecoveryLlm(scores=(4, 4, 4, 4))
+    llm = RecoveryLlm(scores=(4, 4, 4))
 
     morning.run_morning(DATE, _deps(memory=memory, llm=llm))
 
