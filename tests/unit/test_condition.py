@@ -385,3 +385,29 @@ def test_deterministic_recovery_keeps_at_most_two_times_per_line():
 
     for line in section.splitlines()[1:]:
         assert len(re.findall(r"\d{1,2}:\d{2}", line)) <= 2
+
+
+def test_condition_lines_start_with_stars_for_each_level():
+    """4段階を星3つ〜星0個で表し、行頭のポチを置き換える。"""
+    from sleeptech.model.condition import level_stars
+
+    assert level_stars("良好") == "⭐⭐⭐"
+    assert level_stars("通常") == "⭐⭐☆"
+    assert level_stars("注意") == "⭐☆☆"
+    assert level_stars("要休養") == "☆☆☆"
+    assert all(len(level_stars(level)) == 3 for level in
+               ("良好", "通常", "注意", "要休養"))
+
+
+def test_condition_section_shows_stars_instead_of_bullets():
+    """コンディションの各行は星で始まり、リカバリーは「・」のままにする。"""
+    report, vital, _, times = _case(316, 78.0, 24)
+
+    text = render_morning_report(report, vital, times)
+    condition, recovery = text.split("今日のリカバリー")
+
+    body = condition.split("今日のコンディション")[1].strip().splitlines()
+    assert body, "コンディション行があるはず"
+    assert all(line[0] in "⭐☆" for line in body)
+    assert not any(line.startswith("・") for line in body)
+    assert all(line.startswith("・") for line in recovery.strip().splitlines())

@@ -24,6 +24,19 @@ _DOMAIN_LABELS = {
 # リカバリーを出す評価レベル。［良好］［通常］には出さない。
 _TARGET_LEVELS = {"注意", "要休養"}
 
+# 評価レベルの見え方。埋まっている星の数が多いほど良い状態を表す。
+# 空きは☆で埋めて幅を揃える（要休養の行だけ字下げがずれると読みにくい）。
+_LEVEL_STARS = {"良好": 3, "通常": 2, "注意": 1, "要休養": 0}
+_STAR_FILLED = "⭐"
+_STAR_EMPTY = "☆"
+_STAR_SLOTS = 3
+
+
+def level_stars(level: str) -> str:
+    """評価レベルを星3つ〜星0個で表す。"""
+    filled = _LEVEL_STARS.get(level, 0)
+    return _STAR_FILLED * filled + _STAR_EMPTY * (_STAR_SLOTS - filled)
+
 # 材料に載せる時刻の意味。フィールド名 → 表示ラベル。
 _TIME_MEANINGS = {
     "wake_h": "起床 ",
@@ -382,7 +395,10 @@ def render_condition_section(
     lines.extend(["", "今日のコンディション"])
     for assessment in report.displayed_assessments:
         label = _DOMAIN_LABELS.get(assessment.domain, assessment.domain)
-        lines.append(f"・{label}［{assessment.level}］{assessment.headline}")
+        lines.append(
+            f"{level_stars(assessment.level)} {label}［{assessment.level}］"
+            f"{assessment.headline}"
+        )
     return "\n".join(lines)
 
 
