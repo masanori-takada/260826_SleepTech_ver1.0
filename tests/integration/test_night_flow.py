@@ -10,7 +10,9 @@ from sleeptech.config import load_settings
 from sleeptech.llm.client import LlmError, NullClient
 from sleeptech.memory.client import InMemoryBackend, MemoryClient, NotificationClaimBusy
 from sleeptech.memory.schemas import DailyVital, Feedback, Prediction
-from sleeptech.notifier.line import FakePushClient, LinePushClient, parse_feedback
+from sleeptech.notifier.line import (
+    FakePushClient, LinePushClient, parse_feedback, parse_feedback_answer,
+)
 from sleeptech.workflow import night
 
 NOW_H = 22.5  # 22:30
@@ -39,23 +41,7 @@ class StubLlm:
         self.calls.append((system, user))
         if self.template is not None:
             return self.template
-        time_s = next(l.split(": ")[1] for l in user.splitlines() if l.startswith("推奨就寝時刻"))
-        range_line = next(l for l in user.splitlines() if l.startswith("明日の主要"))
-        late_lines = ""
-        if any(l.startswith("目標時刻は過ぎています。") for l in user.splitlines()):
-            late_lines = "\n" + "\n".join(
-                l for l in user.splitlines()
-                if l.startswith(("目標時刻は過ぎています。", "今から確保できる見込み:"))
-            )
-        return (
-            f"今夜は{time_s}までに寝るのがおすすめです。\n"
-            + next(l for l in user.splitlines() if l.startswith("起床目安:"))
-            + "\n" + next(l for l in user.splitlines() if l.startswith("目標睡眠時間:"))
-            + late_lines
-            + "\n" + range_line + "\n信頼度：低（評価データ0件）。\n"
-            "推定の目安です。\n実測の仕事能力ではありません\n"
-            "中途覚醒・HRV・心拍数は現行の%計算には使っていません"
-        )
+        return user
 
 
 class PromptProtectedLineEchoLlm:
@@ -66,17 +52,7 @@ class PromptProtectedLineEchoLlm:
 
     def complete(self, system: str, user: str) -> str:
         self.calls.append((system, user))
-        prefixes = (
-            "推奨就寝時刻:",
-            "起床目安:",
-            "目標睡眠時間:",
-            "明日の主要時間帯の低下見込み:",
-            "信頼度:",
-            "※睡眠モデルと主観評価による推定の目安",
-            "実測の仕事能力ではありません",
-            "中途覚醒・HRV・心拍数は現行の%計算には使っていません",
-        )
-        return "\n".join(line for line in user.splitlines() if line.startswith(prefixes))
+        return user
 
 
 def _memory(days: int = 14) -> MemoryClient:
@@ -134,6 +110,9 @@ def test_quick_reply_answers_are_parseable():
     night.run_night(DATE, NOW_H, _deps(push=push))
     texts = [i["action"]["text"] for i in push.sent[0]["quickReply"]["items"]]
     assert [parse_feedback(t) for t in texts] == [1, 2, 3, 4, 5]
+    answers = [parse_feedback_answer(text) for text in texts]
+    assert len({answer.dimension for answer in answers}) == 1
+    assert answers[0].dimension in {"focus", "sleepiness", "mood", "physical_fatigue"}
 
 
 def test_saves_prediction_and_marks_notified():
@@ -143,6 +122,35 @@ def test_saves_prediction_and_marks_notified():
     assert pred is not None
     assert pred.bedtime_h is not None
     assert memory.is_notified(DATE, "NIGHT") is True
+
+
+def test_night_line_compares_three_bedtimes_and_saves_scenarios():
+    """通常時は推奨・30分遅れ・60分遅れを比較して保存する。"""
+    memory = _memory()
+    push = FakePushClient()
+
+    night.run_night(DATE, NOW_H, _deps(memory=memory, llm=NullClient(), push=push))
+
+    text = push.sent[0]["text"]
+    assert "今夜の選択肢" in text
+    assert "推奨" in text
+    assert "30分遅れ" in text
+    assert "60分遅れ" in text
+    assert "現行の%計算には使っていません" not in text
+    pred = memory.get_prediction(DATE, "NIGHT")
+    assert [item["delay_min"] for item in pred.scenarios] == [0, 30, 60]
+
+
+def test_too_late_night_line_does_not_show_future_delay_scenarios():
+    """目標時刻を過ぎたら未来の遅い就寝を選択肢として出さない。"""
+    push = FakePushClient()
+
+    night.run_night(DATE, 28.0, _deps(llm=NullClient(), push=push))
+
+    text = push.sent[0]["text"]
+    assert "今すぐ就寝" in text
+    assert "30分遅れ" not in text
+    assert "60分遅れ" not in text
 
 
 def test_night_saves_raw_calibrated_range_and_confidence():
@@ -325,8 +333,8 @@ def test_push_failure_still_propagates_and_leaves_not_notified():
 # "advice" ログでも drop=0 を確認済み）。
 
 
-def test_zero_drop_night_does_not_require_percent_in_facts(monkeypatch):
-    """I4: 低下率0%のときは Facts.percents が空になる（0%の明記を必須にしない）。"""
+def test_zero_drop_night_protects_the_complete_scenario_lines(monkeypatch):
+    """数値を個別生成させず、計算済みシナリオ行を完全一致で保護する。"""
     memory = _memory()
     captured = {}
     original = night.gv.validate
@@ -341,7 +349,8 @@ def test_zero_drop_night_does_not_require_percent_in_facts(monkeypatch):
     result = night.run_night(DATE, NOW_H, _deps(memory=memory, push=push))
 
     assert result["mean_drop_pct"] == 0
-    assert captured["facts"].percents == [0, 5]
+    assert captured["facts"].percents == []
+    assert any("推奨" in phrase for phrase in captured["facts"].required_phrases)
 
 
 def test_zero_drop_night_fallback_avoids_minus_zero_percent():

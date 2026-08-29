@@ -14,7 +14,6 @@ from datetime import timedelta
 
 from sleeptech.collectors import ConsentRevokedError
 from sleeptech.collectors import vitals as vt
-from sleeptech.guardrail import fallback
 from sleeptech.guardrail import validator as gv
 from sleeptech.llm import prompts
 from sleeptech.memory.schemas import Prediction

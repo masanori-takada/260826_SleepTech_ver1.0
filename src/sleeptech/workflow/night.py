@@ -9,15 +9,16 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from sleeptech.guardrail import fallback
 from sleeptech.guardrail import validator as gv
 from sleeptech.llm import prompts
-from sleeptech.memory.schemas import Message, Prediction
+from sleeptech.memory.schemas import Prediction
 from sleeptech.model import baseline as bl
 from sleeptech.model import constants as C
 from sleeptech.model.calibration import display_range
 from sleeptech.workflow._calibration import load_calibration
 from sleeptech.model import two_process as tp
+from sleeptech.model import night_scenarios as ns
+from sleeptech.model.feedback_dimension import select_feedback_dimension
 from sleeptech.notifier.line import build_message
 from sleeptech.observability import StructuredLogger
 from sleeptech.workflow._common import push as _push
@@ -65,50 +66,21 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
         calibration_offset_pct=cal.offset_pct,
     )
     range_low, range_high = display_range(advice.mean_drop_pct, cal.margin_pct)
+    scenarios = ns.build_scenarios(
+        advice, baseline, debt_h, cal.offset_pct, cal.margin_pct
+    )
     log.log("advice", bedtime_h=advice.bedtime_h, drop=advice.mean_drop_pct,
             status=advice.status, offset=cal.offset_pct,
             feedback_count=cal.feedback_count, confidence=cal.confidence)
 
-    # 4-5. 文章化と検証
-    # require_day_prefix=True: 就寝時刻が日跨ぎ（bedtime_h >= 24.0）のとき、
-    # 本文中の時刻表記に「翌」が付いていることまで照合する（夜フロー限定）。
-    # I4対応: 低下率0%の晩は percents を必須値から外す。0を必須にすると
-    # LLMは本文に文字どおり「0%」を含めないとガードレールを通せず、
-    # 「ほぼ低下しません」のような自然な表現が numbers 判定で弾かれてしまう
-    # （平常な晩ほどテンプレート文に落ちる、という逆転が起きていた）。
-    required_phrases = [
-        f"起床目安: {prompts.fmt_hm_plain(baseline.wake_h)}",
-        f"目標睡眠時間: {baseline.effective_target_sleep_h:.1f}時間",
-    ]
-    if advice.status == "too_late" and advice.available_sleep_h is not None:
-        hours, minutes = divmod(round(advice.available_sleep_h * 60), 60)
-        required_phrases.extend([
-            "目標時刻は過ぎています。今すぐ寝る",
-            f"今から確保できる見込み: {hours}時間{minutes:02d}分",
-        ])
-    confidence_label = {"low": "低", "medium": "中", "high": "高"}[cal.confidence]
-    protected_lines = [
-        *required_phrases,
-        f"明日の主要時間帯の低下見込み: {range_low}〜{range_high}%",
-        f"信頼度：{confidence_label}（評価データ{cal.feedback_count}件）。",
-        *gv.REQUIRED_NOTES,
-    ]
-    facts = gv.Facts(
-        times=[advice.bedtime_h],
-        percents=[range_low, range_high],
-        allowed_percents=[range_low, range_high],
-        require_day_prefix=True,
-        required_confidence={"low": "低", "medium": "中", "high": "高"}[cal.confidence],
-        required_feedback_count=cal.feedback_count,
-        required_notes=gv.REQUIRED_NOTES,
-        required_ranges=[(range_low, range_high)],
-        required_phrases=tuple(required_phrases),
-        protected_lines=tuple(protected_lines),
+    # 4-5. 3つの就寝シナリオを計算済み本文にし、LLMには表現整理だけを許す。
+    # 目標時刻を過ぎている場合は「今すぐ」の1件だけになる。
+    canonical_body = ns.render_night_scenarios(scenarios, baseline)
+    required_lines = tuple(
+        line.rstrip("。．") for line in canonical_body.splitlines() if line.strip()
     )
-    body, used_fallback, regen_count = _compose(
-        deps, advice, baseline, debt_h, range_low, range_high,
-        cal.confidence, cal.feedback_count, facts, log,
-    )
+    facts = gv.Facts(required_phrases=required_lines)
+    body, used_fallback, regen_count = _compose(deps, canonical_body, facts, log)
 
     # 6. 送信
     # LinePushClient.push は HTTPError/URLError を捕捉せず送出する。
@@ -119,7 +91,14 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
     # 自動リトライされる構成を前提とし、ここでは例外を握りつぶさず
     # そのまま上位へ伝播させることで「本当に届いた時だけ既読化する」
     # 冪等性を守る。
-    _push(deps, build_message(body, with_feedback=True), _retry_key(date, SLOT))
+    feedback_dimension = select_feedback_dimension(
+        deps.memory.get_feedback_desc(100), date
+    )
+    _push(
+        deps,
+        build_message(body, with_feedback=True, feedback_dimension=feedback_dimension),
+        _retry_key(date, SLOT),
+    )
     log.log("night_sent", fallback=used_fallback)
 
     # push は成功済みなので、ここで失敗扱いにすると再試行で二重送信になる。
@@ -147,6 +126,7 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
                 mean_drop_pct=advice.mean_drop_pct,
                 status=advice.status,
                 curve=[asdict(d) for d in advice.curve],
+                scenarios=[asdict(item) for item in scenarios],
                 raw_mean_drop_pct=advice.raw_mean_drop_pct,
                 calibrated_mean_drop_pct=advice.mean_drop_pct,
                 range_low_pct=range_low,
@@ -186,8 +166,7 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
     }
 
 
-def _compose(deps, advice, baseline, debt_h, range_low, range_high,
-             confidence, feedback_count, facts, log) -> tuple[str, bool, int]:
+def _compose(deps, canonical_body, facts, log) -> tuple[str, bool, int]:
     """LLM で文章化し検証する。通らなければテンプレート文を返す。
 
     戻り値の3つめは regen_count（ガードレール不通過による再試行回数。
@@ -198,8 +177,7 @@ def _compose(deps, advice, baseline, debt_h, range_low, range_high,
     でも regen_count=2（max_regen）という不正確な値が記録されていた。
     実際に試行した回数（attempts_made）から数える。
     """
-    user = prompts.night_user(advice, baseline, debt_h, range_low, range_high,
-                              confidence, feedback_count)
+    user = prompts.night_scenarios_user(canonical_body)
     attempts_made = 0
     for attempt in range(deps.max_regen + 1):
         if deps.deadline is not None and not deps.deadline.can_start():
@@ -214,5 +192,4 @@ def _compose(deps, advice, baseline, debt_h, range_low, range_high,
         if result.passed:
             return text, False, attempt
         log.log("guardrail_rejected", attempt=attempt, reason=result.reason)
-    return fallback.night_text(advice, baseline, debt_h, range_low, range_high,
-                               confidence, feedback_count), True, max(attempts_made - 1, 0)
+    return canonical_body, True, max(attempts_made - 1, 0)

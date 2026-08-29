@@ -24,7 +24,7 @@ from datetime import timedelta
 
 from sleeptech.config import load_settings
 from sleeptech.memory.schemas import Feedback
-from sleeptech.notifier.line import parse_feedback
+from sleeptech.notifier.line import parse_feedback_answer
 from sleeptech.observability import StructuredLogger
 from sleeptech.workflow.morning import run_morning
 from src.handlers import deps as hd
@@ -34,6 +34,13 @@ _WAKEUP_RE = re.compile(r"^(おはよう(ございます)?|起きた|おきた|�
 # （2日前は見ない）。定数名は「遡る日数」ではなく「見る日数」を表す。
 FEEDBACK_LOOKBACK_DAYS = 2
 FEEDBACK_SAVED_TEXT = "評価{score}を記録しました。次回以降の予測補正に反映します。"
+FEEDBACK_DOMAIN_SAVED_TEXT = "{dimension}を{score}として記録しました。次回以降の分析に反映します。"
+FEEDBACK_DIMENSION_LABELS = {
+    "focus": "集中力",
+    "sleepiness": "眠気の少なさ",
+    "mood": "気分",
+    "physical_fatigue": "身体の軽さ",
+}
 FEEDBACK_UNMATCHED_TEXT = (
     "評価を対応する朝の予測に紐付けられませんでした。次の夜の評価から記録します。"
 )
@@ -287,8 +294,9 @@ def handler(event, context=None) -> dict:
     allowed_user_id = line_secret_data.get("user_id", "")
     reply_client = None
     for authorized in _authorized_texts(payload, allowed_user_id):
-        score = parse_feedback(authorized.text)
-        if score is not None:
+        answer = parse_feedback_answer(authorized.text)
+        if answer is not None:
+            score = answer.score
             if authorized.webhook_event_id_present and authorized.webhook_event_id is None:
                 log.log("feedback_event_invalid")
                 continue
@@ -319,6 +327,7 @@ def handler(event, context=None) -> dict:
                         evaluated_date=target.evaluated_date,
                         prediction_date=target.prediction_date,
                         score=score,
+                        dimension=answer.dimension,
                         answered_at=answered_at,
                         source_event_id=event_id,
                     )
@@ -327,14 +336,24 @@ def handler(event, context=None) -> dict:
                     log.log("feedback_duplicate")
                     handled.append("feedback_duplicate")
                     continue
-                log.log("feedback_saved", date=target.evaluated_date, score=score)
+                log.log(
+                    "feedback_saved", date=target.evaluated_date, score=score,
+                    dimension=answer.dimension,
+                )
                 if authorized.reply_token:
                     if reply_client is None:
                         reply_client = hd._push_from_secret(line_secret_data)
                     try:
+                        reply_text = (
+                            FEEDBACK_DOMAIN_SAVED_TEXT.format(
+                                dimension=FEEDBACK_DIMENSION_LABELS[answer.dimension],
+                                score=score,
+                            )
+                            if answer.dimension else FEEDBACK_SAVED_TEXT.format(score=score)
+                        )
                         reply_client.reply(
                             authorized.reply_token,
-                            {"type": "text", "text": FEEDBACK_SAVED_TEXT.format(score=score)},
+                            {"type": "text", "text": reply_text},
                         )
                         log.log("feedback_reply_sent", date=target.evaluated_date)
                     except Exception:

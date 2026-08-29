@@ -18,6 +18,19 @@ def test_load_calibration_uses_only_matching_morning_predictions():
     assert got.confidence == "low"
 
 
+def test_non_focus_domain_feedback_does_not_adjust_focus_curve():
+    memory = MemoryClient(InMemoryBackend())
+    memory.save_prediction(Prediction(date="2026-08-26", slot="MORNING", mean_drop_pct=5))
+    memory.save_feedback(Feedback(
+        date="2026-08-27", score=1, prediction_date="2026-08-26", dimension="mood"
+    ))
+
+    got = load_calibration(memory, sleep_days=14)
+
+    assert got.feedback_count == 0
+    assert got.offset_pct == 0.0
+
+
 def test_load_calibration_ignores_missing_prediction():
     memory = MemoryClient(InMemoryBackend())
     memory.save_feedback(Feedback(date="2026-08-27", score=1))

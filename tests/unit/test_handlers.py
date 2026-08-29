@@ -753,6 +753,29 @@ def test_feedback_is_saved_and_acknowledged_once(monkeypatch):
     assert replies == [("r1", "評価1を記録しました。次回以降の予測補正に反映します。")]
 
 
+def test_domain_feedback_is_saved_with_dimension_and_named_reply(monkeypatch):
+    _patch_webhook_dependencies(monkeypatch)
+    memory = MemoryClient(InMemoryBackend())
+    memory.save_message(Message(date="2026-08-27", slot="NIGHT", delivered=True))
+    memory.save_prediction(Prediction(date="2026-08-26", slot="MORNING", mean_drop_pct=8))
+    replies = []
+
+    class FakeReplyClient:
+        def reply(self, reply_token, message):
+            replies.append((reply_token, message["text"]))
+
+    monkeypatch.setattr(wh.hd, "_memory", lambda settings: memory)
+    monkeypatch.setattr(wh.hd, "_push_from_secret", lambda secret_data: FakeReplyClient())
+
+    response = wh.handler(_feedback_webhook_event("評価:mood:4", "r-domain"))
+
+    saved = memory.get_feedback("2026-08-27")
+    assert response["statusCode"] == 200
+    assert saved.dimension == "mood"
+    assert saved.score == 4
+    assert replies == [("r-domain", "気分を4として記録しました。次回以降の分析に反映します。")]
+
+
 def test_unmatched_feedback_gets_clear_reply_without_save(monkeypatch):
     _patch_webhook_dependencies(monkeypatch)
     memory = MemoryClient(InMemoryBackend())

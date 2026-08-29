@@ -8,6 +8,7 @@ Webhook 側は完全一致だけで判定する。LLM 分類器は使わない�
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Callable
 from urllib.error import HTTPError
 
@@ -15,6 +16,12 @@ PUSH_URL = "https://api.line.me/v2/bot/message/push"
 REPLY_URL = "https://api.line.me/v2/bot/message/reply"
 FEEDBACK_PREFIX = "評価:"
 FEEDBACK_QUESTION = "今日の調子はどうだった？"
+FEEDBACK_QUESTIONS = {
+    "focus": "今日の集中力はどうだった？",
+    "sleepiness": "今日の眠気の少なさはどうだった？",
+    "mood": "今日の気分はどうだった？",
+    "physical_fatigue": "今日の身体の軽さはどうだった？",
+}
 FEEDBACK_LABELS: list[tuple[str, int]] = [
     ("1 最悪", 1),
     ("2", 2),
@@ -27,9 +34,22 @@ FEEDBACK_LABELS: list[tuple[str, int]] = [
 # 前方一致にすると「今日の評価:3くらい」のような自然文まで拾ってしまうため、
 # 文字列全体に対する完全一致（^...$ アンカー）で判定する。
 _FEEDBACK_RE = re.compile(rf"^{re.escape(FEEDBACK_PREFIX)}([1-5])$")
+_DOMAIN_FEEDBACK_RE = re.compile(
+    rf"^{re.escape(FEEDBACK_PREFIX)}(focus|sleepiness|mood|physical_fatigue):([1-5])$"
+)
 
 
-def build_message(text: str, with_feedback: bool) -> dict:
+@dataclass(frozen=True)
+class FeedbackAnswer:
+    """クイックリプライから復元した評価領域と5段階スコア。"""
+
+    dimension: str | None
+    score: int
+
+
+def build_message(
+    text: str, with_feedback: bool, feedback_dimension: str | None = None
+) -> dict:
     """LINE の messages 要素を組み立てる。
 
     with_feedback=True のとき、本文末尾に質問を足し5段階のクイックリプライを付ける。
@@ -38,9 +58,10 @@ def build_message(text: str, with_feedback: bool) -> dict:
     if not with_feedback:
         return {"type": "text", "text": text}
 
+    question = FEEDBACK_QUESTIONS.get(feedback_dimension, FEEDBACK_QUESTION)
     return {
         "type": "text",
-        "text": f"{text}\n\n{FEEDBACK_QUESTION}",
+        "text": f"{text}\n\n{question}",
         "quickReply": {
             "items": [
                 {
@@ -48,7 +69,10 @@ def build_message(text: str, with_feedback: bool) -> dict:
                     "action": {
                         "type": "message",
                         "label": label,
-                        "text": f"{FEEDBACK_PREFIX}{score}",
+                        "text": (
+                            f"{FEEDBACK_PREFIX}{feedback_dimension}:{score}"
+                            if feedback_dimension else f"{FEEDBACK_PREFIX}{score}"
+                        ),
                     },
                 }
                 for label, score in FEEDBACK_LABELS
@@ -59,8 +83,20 @@ def build_message(text: str, with_feedback: bool) -> dict:
 
 def parse_feedback(text: str) -> int | None:
     """クイックリプライの回答なら 1-5 を返す。それ以外は None。"""
-    m = _FEEDBACK_RE.match((text or "").strip())
-    return int(m.group(1)) if m else None
+    answer = parse_feedback_answer(text)
+    return answer.score if answer else None
+
+
+def parse_feedback_answer(text: str) -> FeedbackAnswer | None:
+    """新旧クイックリプライを領域付きの回答へ復元する。"""
+    normalized = (text or "").strip()
+    domain_match = _DOMAIN_FEEDBACK_RE.match(normalized)
+    if domain_match:
+        return FeedbackAnswer(domain_match.group(1), int(domain_match.group(2)))
+    legacy_match = _FEEDBACK_RE.match(normalized)
+    if legacy_match:
+        return FeedbackAnswer(None, int(legacy_match.group(1)))
+    return None
 
 
 class LinePushClient:

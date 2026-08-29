@@ -113,7 +113,7 @@ def test_night_user_does_not_offer_forbidden_success_phrase():
 
 
 def test_night_and_morning_prompt_lengths_match_required_output():
-    assert "夜" in NIGHT_SYSTEM and "200文字以内" in NIGHT_SYSTEM
+    assert "夜" in NIGHT_SYSTEM and "400文字以内" in NIGHT_SYSTEM
     assert "朝" in MORNING_SYSTEM and "600文字以内" in MORNING_SYSTEM
 
 

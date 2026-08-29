@@ -32,6 +32,25 @@ def test_feedback_prompt_is_appended_to_the_body():
     assert "調子" in msg["text"]
 
 
+def test_domain_feedback_encodes_focus_in_question_and_answer_payload():
+    msg = line.build_message("本文", with_feedback=True, feedback_dimension="focus")
+
+    assert "集中力" in msg["text"]
+    texts = [item["action"]["text"] for item in msg["quickReply"]["items"]]
+    assert texts == [f"評価:focus:{score}" for score in (1, 2, 3, 4, 5)]
+
+
+def test_parse_domain_feedback_returns_dimension_and_score():
+    answer = line.parse_feedback_answer("評価:sleepiness:4")
+
+    assert answer.dimension == "sleepiness"
+    assert answer.score == 4
+
+
+def test_parse_domain_feedback_rejects_unknown_dimension():
+    assert line.parse_feedback_answer("評価:unknown:4") is None
+
+
 @pytest.mark.parametrize("n", [1, 2, 3, 4, 5])
 def test_parse_feedback_accepts_valid_scores(n):
     assert line.parse_feedback(f"{line.FEEDBACK_PREFIX}{n}") == n

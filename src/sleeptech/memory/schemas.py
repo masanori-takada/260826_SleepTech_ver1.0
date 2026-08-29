@@ -175,6 +175,7 @@ class Prediction:
     mean_drop_pct: int = 0
     status: str = "ok"
     curve: list = field(default_factory=list)
+    scenarios: list = field(default_factory=list)
     recovery: dict = field(default_factory=dict)
     raw_mean_drop_pct: float | None = None
     calibrated_mean_drop_pct: float | None = None
@@ -225,6 +226,7 @@ class Feedback:
 
     date: str
     score: int
+    dimension: str | None = None
     answered_at: str | None = None
     evaluated_date: str | None = None
     prediction_date: str | None = None

@@ -20,6 +20,9 @@ def load_calibration(memory, sleep_days: int) -> Calibration:
     """対応するMORNING予測があるフィードバックだけで補正を算出する。"""
     pairs = []
     for feedback in memory.get_feedback_desc(MAX_FEEDBACK):
+        # 旧形式の総合評価と集中力評価だけを集中力%の補正に使う。
+        if feedback.dimension not in (None, "focus"):
+            continue
         prediction = memory.get_prediction(feedback.effective_prediction_date, "MORNING")
         if prediction is None:
             continue

@@ -30,10 +30,9 @@ _COMMON_RULES = (
 )
 
 NIGHT_SYSTEM = (
-    "あなたは睡眠コーチです。与えられた推奨就寝時刻と予測低下率を、"
-    "短く前向きな日本語のメッセージに整形してください。\n"
-    "夜の本文は200文字以内にしてください。\n"
-    "「実測の仕事能力ではありません」と、現行計算で未使用のデータ注記を省略しないこと。\n"
+    "あなたは睡眠コーチです。計算済みの就寝シナリオ比較を、"
+    "短く前向きな日本語に整えてください。確定本文の各行は変更・省略せず1回ずつ含めてください。\n"
+    "夜の本文は400文字以内にしてください。\n"
     + _COMMON_RULES
 )
 
@@ -46,6 +45,11 @@ MORNING_SYSTEM = (
 
 def morning_condition_user(canonical_body: str) -> str:
     """計算済みの朝本文をLLMへ渡す。LLMは数値計算を行わない。"""
+    return canonical_body
+
+
+def night_scenarios_user(canonical_body: str) -> str:
+    """計算済みの夜シナリオ本文をLLMへ渡す。"""
     return canonical_body
 
 
