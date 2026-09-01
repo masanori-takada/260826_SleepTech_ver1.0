@@ -171,6 +171,23 @@ def predict_curve_from_bedtime(
     return predict_curve(sleep, baseline, debt_h)
 
 
+def debt_repayment_h(debt_h: float) -> float:
+    """今夜の目標睡眠に上乗せする負債返済分（時間）。
+
+    負債の一部だけを返す。全額を1晩で返そうとすると推奨就寝時刻が
+    現実離れした早さになり、達成できずに負債がさらに積み上がる。
+    上乗せが 5〜10 分程度にしかならない場合は 0 にする（推奨時刻が
+    実質動かないのに「返済中」と表示されるのを避けるため）。
+    """
+    repay = min(max(0.0, debt_h) * C.DEBT_REPAY_RATIO, C.DEBT_REPAY_MAX_H)
+    return round(repay, 3) if repay >= C.DEBT_REPAY_MIN_H else 0.0
+
+
+def tonight_target_sleep_h(baseline: Baseline, debt_h: float) -> float:
+    """今夜だけの目標睡眠時間。平常時の目標に負債返済分を上乗せする。"""
+    return baseline.effective_target_sleep_h + debt_repayment_h(debt_h)
+
+
 def recommend_bedtime(
     now_h: float,
     baseline: Baseline,
@@ -179,6 +196,7 @@ def recommend_bedtime(
     deep_min: float | None = None,
     target_drop_pct: float = C.TARGET_DROP_PCT,
     calibration_offset_pct: float = 0.0,
+    target_sleep_h: float | None = None,
 ) -> BedtimeAdvice:
     """閾値を満たす最も遅い就寝時刻を線形スキャンで求める。
 
@@ -193,13 +211,19 @@ def recommend_bedtime(
     target_drop_pct: 「閾値を満たす」の閾値（%）。既定は C.TARGET_DROP_PCT。
     STC_TARGET_DROP_PCT で上書きしたい呼び出し側（夜フロー）がここに渡す。
     model/ 配下は純粋関数のみのため、ここでは環境変数を読まない。
+
+    target_sleep_h: その晩だけの目標睡眠時間。負債返済分を上乗せした値を
+    夜フローが渡す。省略時は baseline の目標睡眠をそのまま使う。
     """
     # 旧レコードや旧呼び出しで生成した target_sleep_h=None の Baseline は、
     # 従来の探索上限を維持する。compute() が生成する新しい Baseline では
     # 明示された目標睡眠時間も上限に含め、短い習慣睡眠を推奨しない。
+    effective_target_h = (
+        target_sleep_h if target_sleep_h is not None else baseline.effective_target_sleep_h
+    )
     limit_h = baseline.wake_h - C.MIN_SLEEP_BEFORE_WAKE_H
-    if baseline.target_sleep_h is not None:
-        limit_h = min(limit_h, baseline.wake_h - baseline.effective_target_sleep_h)
+    if baseline.target_sleep_h is not None or target_sleep_h is not None:
+        limit_h = min(limit_h, baseline.wake_h - effective_target_h)
 
     def _evaluate(t: float) -> tuple[list[HourlyDrop], float, float]:
         curve = predict_curve_from_bedtime(t, baseline, debt_h, rem_min, deep_min)
@@ -224,7 +248,7 @@ def recommend_bedtime(
         candidates.append((t, mean, curve))
 
     # 過小睡眠を勧めないため、平常時睡眠時間を確保できる時刻を上限とする
-    comfortable_h = baseline.wake_h - baseline.effective_target_sleep_h
+    comfortable_h = baseline.wake_h - effective_target_h
     passing = [c for c in candidates if c[1] <= target_drop_pct]
     if passing:
         eligible = [c for c in passing if c[0] <= comfortable_h] or passing

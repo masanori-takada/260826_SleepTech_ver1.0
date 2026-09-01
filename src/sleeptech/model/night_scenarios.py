@@ -68,14 +68,27 @@ def _delay_label(delay_min: int) -> str:
 def render_night_scenarios(
     scenarios: tuple[BedtimeScenario, ...],
     baseline: Baseline,
+    debt_h: float = 0.0,
+    repay_h: float = 0.0,
 ) -> str:
-    """夜LINE向けに就寝シナリオを短く表示する。"""
-    lines = [
-        f"起床目安：{fmt_hm(baseline.wake_h)}",
-        f"目標睡眠：{baseline.effective_target_sleep_h:.1f}時間",
-        "",
-        "今夜の選択肢",
-    ]
+    """夜LINE向けに就寝シナリオを短く表示する。
+
+    repay_h > 0 は、今夜の目標睡眠に負債返済分を上乗せしたことを表す。
+    上乗せの理由が読み取れないと「なぜ今日だけ推奨が早いのか」が伝わらない
+    ため、負債と上乗せ分を明示する。
+    """
+    target_h = baseline.effective_target_sleep_h + repay_h
+    lines = [f"起床目安：{fmt_hm(baseline.wake_h)}"]
+    if repay_h > 0:
+        lines.append(f"睡眠負債：{debt_h:.1f}時間（今夜 {repay_h:.1f}時間 返す）")
+        lines.append(
+            f"目標睡眠：{target_h:.1f}時間"
+            f"（平常時 {baseline.effective_target_sleep_h:.1f}時間 + 返済分）"
+        )
+    else:
+        lines.append(f"睡眠負債：{max(0.0, debt_h):.1f}時間")
+        lines.append(f"目標睡眠：{target_h:.1f}時間")
+    lines.extend(["", "今夜の選択肢"])
     for scenario in scenarios:
         if scenario.sleep_now:
             label = "今すぐ就寝"

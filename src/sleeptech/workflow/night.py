@@ -61,9 +61,14 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
     log.log("baseline", days=baseline.days_used, default=baseline.is_default, debt=debt_h)
 
     # 3. 推奨就寝時刻
+    # 負債があれば今夜だけ目標睡眠を上乗せする。上乗せしないと推奨時刻が
+    # 常に「起床 - 平常時の目標睡眠」に張り付き、負債が減らない。
+    tonight_target_h = tp.tonight_target_sleep_h(baseline, debt_h)
+    repay_h = tonight_target_h - baseline.effective_target_sleep_h
     advice = tp.recommend_bedtime(
         now_h, baseline, debt_h, target_drop_pct=deps.settings.target_drop_pct,
         calibration_offset_pct=cal.offset_pct,
+        target_sleep_h=tonight_target_h,
     )
     range_low, range_high = display_range(advice.mean_drop_pct, cal.margin_pct)
     scenarios = ns.build_scenarios(
@@ -71,11 +76,14 @@ def run_night(date: str, now_h: float, deps: NightDeps) -> dict:
     )
     log.log("advice", bedtime_h=advice.bedtime_h, drop=advice.mean_drop_pct,
             status=advice.status, offset=cal.offset_pct,
-            feedback_count=cal.feedback_count, confidence=cal.confidence)
+            feedback_count=cal.feedback_count, confidence=cal.confidence,
+            debt_h=debt_h, repay_h=repay_h)
 
     # 4-5. 3つの就寝シナリオを計算済み本文にし、LLMには表現整理だけを許す。
     # 目標時刻を過ぎている場合は「今すぐ」の1件だけになる。
-    canonical_body = ns.render_night_scenarios(scenarios, baseline)
+    canonical_body = ns.render_night_scenarios(
+        scenarios, baseline, debt_h=debt_h, repay_h=repay_h
+    )
     required_lines = tuple(
         line.rstrip("。．") for line in canonical_body.splitlines() if line.strip()
     )
